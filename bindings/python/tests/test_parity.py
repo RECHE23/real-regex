@@ -880,6 +880,17 @@ class TestParity(unittest.TestCase):
                     getattr(rr, name)(*args, **kwargs)
                 with self.assertRaises(type(want.exception), msg=(name, args, kwargs)):
                     getattr(rp, name)(*args, **kwargs)
+        for name, result in (("findall", lambda r: r), ("finditer", lambda r: [m.span() for m in r])):
+            for args, kwargs in ((("xabab",), {}), (("xabab", 2), {}), ((), {"string": "abab", "endpos": 3}),
+                                 (("ab", True), {})):
+                self.assertEqual(result(getattr(rp, name)(*args, **kwargs)), result(getattr(rr, name)(*args, **kwargs)),
+                                 (name, args, kwargs))
+            for args, kwargs in (((), {}), (("a", 0, 1, 2), {}), (("a",), {"foo": 1}), (("a",), {"string": "b"}),
+                                 (("a", 1.5), {})):
+                with self.assertRaises(Exception) as want:
+                    result(getattr(rr, name)(*args, **kwargs))
+                with self.assertRaises(type(want.exception), msg=(name, args, kwargs)):
+                    result(getattr(rp, name)(*args, **kwargs))
         pm, rm = rp.search("xab"), rr.search("xab")
         for name in ("group", "start", "end", "span"):
             for args in ((), (0,), (1,), (2,)):

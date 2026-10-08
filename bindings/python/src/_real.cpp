@@ -1141,14 +1141,12 @@ bool collect_match_spans(PatternObject* pat, const subject_view& sv, std::size_t
     return true;
 }
 
-PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
+PyObject* Pattern_findall(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     PatternObject* pat = as_pattern(self);
     PyObject* string = nullptr;
     Py_ssize_t pos = 0;
     Py_ssize_t endpos = PY_SSIZE_T_MAX;
-    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
-                                     &string, &pos, &endpos)) {
+    if (parse_region_args("findall", args, nargs, kwnames, &string, &pos, &endpos) < 0) {
         return nullptr;
     }
     subject_ref subject;
@@ -1246,14 +1244,12 @@ PyObject* Pattern_findall(PyObject* self, PyObject* args, PyObject* kwargs) {
 // Matching-only count: once-per-walk TrailingLA dispatch when eligible (see
 // real::regex::count_matches). No Match / Python objects are materialised — the
 // path Python callers need for trailing-LA class+ throughput (finditer stays pure).
-PyObject* Pattern_count_matches(PyObject* self, PyObject* args, PyObject* kwargs) {
+PyObject* Pattern_count_matches(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     PatternObject* pat = as_pattern(self);
     PyObject* string = nullptr;
     Py_ssize_t pos = 0;
     Py_ssize_t endpos = PY_SSIZE_T_MAX;
-    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
-                                     &string, &pos, &endpos)) {
+    if (parse_region_args("count_matches", args, nargs, kwnames, &string, &pos, &endpos) < 0) {
         return nullptr;
     }
     subject_ref subject;
@@ -1331,14 +1327,12 @@ PyType_Spec match_iterator_spec = {
 // since the cursor keeps reading between __next__ calls. That export is why
 // mutating a bytearray mid-iteration raises BufferError here as it does in re:
 // an exporter with an outstanding view refuses to be resized.
-PyObject* Pattern_finditer(PyObject* self, PyObject* args, PyObject* kwargs) {
+PyObject* Pattern_finditer(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     PatternObject* pat = as_pattern(self);
     PyObject* string = nullptr;
     Py_ssize_t pos = 0;
     Py_ssize_t endpos = PY_SSIZE_T_MAX;
-    static const char* const keywords[] = {"string", "pos", "endpos", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|nn", const_cast<char**>(keywords),
-                                     &string, &pos, &endpos)) {
+    if (parse_region_args("finditer", args, nargs, kwnames, &string, &pos, &endpos) < 0) {
         return nullptr;
     }
     subject_ref subject;
@@ -2113,7 +2107,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"findall", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_findall)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "findall($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Return all non-overlapping matches in the region [pos, endpos).\n\n"
      "Args:\n"
@@ -2126,7 +2120,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"count_matches", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_count_matches)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "count_matches($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Count non-overlapping matches in [pos, endpos) without building Match objects.\n\n"
      "Extension beyond re. Prefer this over len(findall(...)) or\n"
@@ -2141,7 +2135,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"finditer", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_finditer)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "finditer($self, string, pos=0, endpos=sys.maxsize)\n--\n\n"
      "Return an iterator yielding Match objects for the region [pos, endpos).\n\n"
      "Args:\n"
