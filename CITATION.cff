@@ -6,7 +6,7 @@ authors:
   - given-names: René
     family-names: Chenard
     email: rene.chenard.1@ulaval.ca
-version: "2026.10.5"
-date-released: "2026-10-07"
+version: "2026.10.6"
+date-released: "2026-10-08"
 repository-code: "https://github.com/RECHE23/real-regex"
 license: MIT
