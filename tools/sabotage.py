@@ -76,14 +76,21 @@ ROOT = Path(__file__).resolve().parent.parent
 #: sabotage. Every verdict this script printed stayed correct, because each check ran its own
 #: `make`; the hand measurement that came afterwards did not, and read a pinned constant out of a
 #: binary nobody had rebuilt.
-ARTIFACTS: tuple[tuple[str, list[str], str], ...] = (
-    ("include/", ["make", "python-build"], "the abi3 extension module"),
-    ("bindings/python/src/", ["make", "python-build"], "the abi3 extension module"),
-    ("bindings/c/", ["make", "python-build"], "the abi3 extension module"),
+#:
+#: A file can feed SEVERAL artifacts, and each is rebuilt. A header feeds the extension module AND the
+#: C++ test binary: with only the first registered, a `make test` check compiled the sabotage into
+#: `build/real_tests_bin`, the revert rebuilt the module alone, and the test binary kept failing on
+#: the reverted tree.
+PY_MODULE = (["make", "python-build"], "the abi3 extension module")
+TEST_BINARY = (["make", "build"], "build/real_tests_bin")
+ARTIFACTS: tuple[tuple[str, tuple[tuple[list[str], str], ...]], ...] = (
+    ("include/", (PY_MODULE, TEST_BINARY)),
+    ("bindings/python/src/", (PY_MODULE,)),
+    ("bindings/c/", (PY_MODULE,)),
     # The compile alone -- not the enumeration, not the 3.2 M-case run. `exhaustive-compat` depends
     # on this target, so there is one compile line rather than two that can drift.
-    ("fuzz/exhaustive_compat.cpp", ["make", "-C", "fuzz", "exhaustive-compat-build"],
-     "build/exhaustive_compat"),
+    ("fuzz/exhaustive_compat.cpp", ((["make", "-C", "fuzz", "exhaustive-compat-build"],
+                                     "build/exhaustive_compat"),)),
 )
 
 
@@ -92,8 +99,8 @@ def git(*args: str) -> str:
                           check=False).stdout
 
 
-def artifact_for(rel: str) -> tuple[list[str], str] | None:
-    """The rebuild command for this file's artifact, or None when this script knows of none.
+def artifact_for(rel: str) -> tuple[tuple[list[str], str], ...] | None:
+    """The rebuild commands for this file's artifacts, or None when this script knows of none.
 
     None is a NAMED silence, not a fallback: pretending to rebuild by running the recipe for some
     other artifact is worse than saying nothing, because it reads as coverage. A caller then knows
@@ -101,12 +108,17 @@ def artifact_for(rel: str) -> tuple[list[str], str] | None:
     """
     if not rel.endswith((".hpp", ".cpp", ".h")):
         return None
-    best: tuple[list[str], str] | None = None
+    best: tuple[tuple[list[str], str], ...] | None = None
     best_len = -1
-    for prefix, cmd, label in ARTIFACTS:
+    for prefix, artifacts in ARTIFACTS:
         if rel.startswith(prefix) and len(prefix) > best_len:
-            best, best_len = (cmd, label), len(prefix)
+            best, best_len = artifacts, len(prefix)
     return best
+
+
+def rebuild_all(artifacts: tuple[tuple[list[str], str], ...]) -> bool:
+    """Every artifact, even after one fails: a revert must not leave the later ones sabotaged."""
+    return all([rebuild(cmd, label) for cmd, label in artifacts])
 
 
 def rebuild(cmd: list[str], label: str) -> bool:
@@ -148,12 +160,12 @@ EC_CONST_SABOTAGED = "9999999"
 
 def self_test_artifact_map() -> int:
     """The mapping itself, in milliseconds: the right artifact per file, and no fallback."""
-    for rel, wanted in (("include/real/real.hpp", ["make", "python-build"]),
-                        ("bindings/python/src/_real.cpp", ["make", "python-build"]),
-                        ("bindings/c/real_capi.cpp", ["make", "python-build"]),
-                        (EC_SOURCE, ["make", "-C", "fuzz", "exhaustive-compat-build"])):
+    for rel, wanted in (("include/real/real.hpp", [["make", "python-build"], ["make", "build"]]),
+                        ("bindings/python/src/_real.cpp", [["make", "python-build"]]),
+                        ("bindings/c/real_capi.cpp", [["make", "python-build"]]),
+                        (EC_SOURCE, [["make", "-C", "fuzz", "exhaustive-compat-build"]])):
         got = artifact_for(rel)
-        if got is None or got[0] != wanted:
+        if got is None or [cmd for cmd, _ in got] != wanted:
             print(f"sabotage --self-test: {rel} maps to {got}, expected {wanted}. An artifact that "
                   f"follows the wrong file is defect 2, which is what this mapping replaced.")
             return 2
@@ -162,7 +174,7 @@ def self_test_artifact_map() -> int:
             print(f"sabotage --self-test: {rel} claims an artifact it does not have. A decorative "
                   f"rebuild reads as coverage; a named silence does not.")
             return 2
-    print("sabotage --self-test: artifact map OK — 4 files map to their own artifact, 2 to none.")
+    print("sabotage --self-test: artifact map OK — 4 files map to their own artifacts, 2 to none.")
     return 0
 
 
@@ -394,7 +406,7 @@ def main(argv: list[str]) -> int:
     install_interrupt_handlers()
     verdict = 3
     child: subprocess.Popen[str] | None = None
-    artifact: tuple[list[str], str] | None = None
+    artifact: tuple[tuple[list[str], str], ...] | None = None
     written = False
     try:
         # Inside the try: a signal during the write (the file already truncated) must still reach the
@@ -402,7 +414,7 @@ def main(argv: list[str]) -> int:
         src.write_text(text.replace(args.old, args.new, 1))
         written = True
         artifact = artifact_for(rel)
-        if artifact is not None and not rebuild(*artifact):
+        if artifact is not None and not rebuild_all(artifact):
             return 2
         if artifact is None:
             print(f"  sabotage: no artifact registered for {rel} -- nothing is prebuilt, so the "
@@ -422,6 +434,10 @@ def main(argv: list[str]) -> int:
         if not bit:
             print("    A green is a statement about the SABOTAGE first: it did not reach the")
             print("    property. Find a witness that does before concluding the guard is missing.")
+        # The failing checks' own lines first (a RED must name what failed), then the summary.
+        fails = [line for line in out.split("\n") if line.strip().startswith("FAIL ")]
+        for line in fails[:3]:
+            print(f"    {line.strip()[:160]}")
         for line in out.split("\n"):
             if any(k in line for k in ("checks failed", "FAILED", "AssertionError", "Error ")):
                 print(f"    {line.strip()[:110]}")
@@ -454,10 +470,10 @@ def main(argv: list[str]) -> int:
             print(f"    git checkout -- {rel}")
             verdict = 2
         if artifact is not None:
-            rebuild(*artifact)  # the artifact must not outlive the sabotage; this is defect 1
+            rebuild_all(artifact)  # no artifact may outlive the sabotage; this is defect 1
         dirty = git("status", "--porcelain", "--", rel).strip()
         state = 'CLEAN' if not dirty else 'STILL DIRTY: ' + dirty
-        built = artifact[1] if artifact is not None else "no registered artifact"
+        built = " and ".join(label for _, label in artifact) if artifact is not None else "no registered artifact"
         print(f"    reverted ({built} rebuilt) — {rel}: {state}")
     return verdict
 
