@@ -144,7 +144,8 @@ type Regexp struct {
 	_       noCopy
 	re      *C.real_regex
 	expr    string
-	ngroups int // capturing groups + 1, read once at Compile: a query needs no cgo call to size its spans
+	ngroups int      // capturing groups + 1, read once at Compile: a query needs no cgo call to size its spans
+	names   []string // SubexpNames, read once at Compile, so SubexpIndex reads no name from C
 }
 
 // Compile compiles pattern. Mirrors regexp.Compile's signature and error contract.
@@ -159,6 +160,7 @@ func Compile(pattern string) (*Regexp, error) {
 		return nil, errors.New(C.GoString(&errbuf[0]))
 	}
 	r := &Regexp{re: h, expr: pattern, ngroups: int(C.real_group_count(h))}
+	r.names = r.readSubexpNames()
 	runtime.SetFinalizer(r, (*Regexp).Close)
 	return r, nil
 }
@@ -253,10 +255,18 @@ func (r *Regexp) NumSubexp() int {
 }
 
 // SubexpNames returns each group's name in group-index order; index 0 (the whole match) and
-// any unnamed group are "" — the same shape as regexp.Regexp.SubexpNames.
-// Names are fetched with the C ABI two-call protocol (length query, then exact buffer) so long
-// names are never truncated or read out of bounds.
+// any unnamed group are "" — the same shape as regexp.Regexp.SubexpNames. As there, the slice is
+// the Regexp's own and must not be modified.
 func (r *Regexp) SubexpNames() []string {
+	if r.re == nil {
+		return []string{}
+	}
+	return r.names
+}
+
+// readSubexpNames asks C for each group's name, once, at Compile, with the C ABI two-call protocol
+// (length query, then exact buffer) so a long name is never truncated or read out of bounds.
+func (r *Regexp) readSubexpNames() []string {
 	n := r.groupCount()
 	names := make([]string, n)
 	for g := 0; g < n; g++ {

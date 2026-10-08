@@ -134,3 +134,12 @@ func BenchmarkFindStringShort(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSubexpIndex(b *testing.B) {
+	re := MustCompile(`(?P<user>\w+)@(?P<host>\w+)\.(?P<tld>\w+)`)
+	for i := 0; i < b.N; i++ {
+		if re.SubexpIndex("tld") != 3 {
+			b.Fatal("wrong index")
+		}
+	}
+}
