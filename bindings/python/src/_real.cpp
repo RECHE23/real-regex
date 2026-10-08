@@ -106,6 +106,10 @@ struct PatternObject {
     // thread replaces them. Reparsing per call cost a rich template ~220 ns over a ~300 ns sub.
     PyObject* repl_key;
     std::shared_ptr<const std::vector<repl_segment>>* repl_segments;
+    // The named groups as Python objects, built on first use: a tuple of (name, index) pairs for groupdict, and
+    // the dict groupindex copies. Rebuilding each name per call cost groupdict twice re's time.
+    PyObject* group_names;
+    PyObject* group_index;
 };
 
 // A UTF-8 walk position shared by every Match one scan yields, so converting byte offsets to
@@ -164,6 +168,8 @@ void Pattern_dealloc(PyObject* self) {
     delete pattern->rx;
     delete pattern->repl_segments;
     Py_XDECREF(pattern->repl_key);
+    Py_XDECREF(pattern->group_names);
+    Py_XDECREF(pattern->group_index);
     Py_XDECREF(pattern->pattern_obj);
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
@@ -592,6 +598,34 @@ PyObject* Match_groups(PyObject* self, PyObject* args, PyObject* kwargs) {
     return out;
 }
 
+// The pattern's (name, index) pairs, built on first use (borrowed; null with an exception set).
+PyObject* pattern_group_names(PatternObject* pat) {
+    if (pat->group_names != nullptr) {
+        return pat->group_names;
+    }
+    const auto names = pat->rx->named_groups();
+    PyObject* const pairs = PyTuple_New(static_cast<Py_ssize_t>(names.size()));
+    if (pairs == nullptr) {
+        return nullptr;
+    }
+    Py_ssize_t i = 0;
+    for (const auto& [name, index] : names) {
+        // Not Py_BuildValue: before 3.13 its '#' formats need PY_SSIZE_T_CLEAN, and a SystemError otherwise.
+        PyObject* const key   = PyUnicode_FromStringAndSize(name.data(), static_cast<Py_ssize_t>(name.size()));
+        PyObject* const value = key == nullptr ? nullptr : PyLong_FromSsize_t(static_cast<Py_ssize_t>(index));
+        PyObject* const pair  = value == nullptr ? nullptr : PyTuple_Pack(2, key, value);
+        Py_XDECREF(key);
+        Py_XDECREF(value);
+        if (pair == nullptr) {
+            Py_DECREF(pairs);
+            return nullptr;
+        }
+        PyTuple_SetItem(pairs, i++, pair);
+    }
+    pat->group_names = pairs;
+    return pairs;
+}
+
 PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
     MatchObject* match = as_match(self);
     PyObject* default_value = Py_None;
@@ -600,14 +634,18 @@ PyObject* Match_groupdict(PyObject* self, PyObject* args, PyObject* kwargs) {
                                      const_cast<char**>(keywords), &default_value)) {
         return nullptr;
     }
+    PyObject* const pairs = pattern_group_names(as_pattern(match->pattern));
+    if (pairs == nullptr) {
+        return nullptr;
+    }
     PyObject* out = PyDict_New();
     if (out == nullptr) {
         return nullptr;
     }
-    for (const auto& [name, index] : as_pattern(match->pattern)->rx->named_groups()) {
-        PyObject* value = group_value(match, static_cast<Py_ssize_t>(index), default_value);
-        if (value == nullptr ||
-            PyDict_SetItemString(out, std::string(name).c_str(), value) < 0) {
+    for (Py_ssize_t i = 0; i < PyTuple_Size(pairs); ++i) {
+        PyObject* const pair  = PyTuple_GetItem(pairs, i);
+        PyObject* const value = group_value(match, PyLong_AsSsize_t(PyTuple_GetItem(pair, 1)), default_value);
+        if (value == nullptr || PyDict_SetItem(out, PyTuple_GetItem(pair, 0), value) < 0) {
             Py_XDECREF(value);
             Py_DECREF(out);
             return nullptr;
@@ -2131,22 +2169,28 @@ PyObject* Pattern_get_flags(PyObject* self, void*) {
 PyObject* Pattern_get_groups(PyObject* self, void*) {
     return PyLong_FromSize_t(as_pattern(self)->rx->group_count());
 }
+// A fresh dict per access, as before (a caller may mutate it), copied from one built on first use.
 PyObject* Pattern_get_groupindex(PyObject* self, void*) {
-    PyObject* out = PyDict_New();
-    if (out == nullptr) {
-        return nullptr;
-    }
-    for (const auto& [name, index] : as_pattern(self)->rx->named_groups()) {
-        PyObject* value = PyLong_FromSize_t(index);
-        if (value == nullptr ||
-            PyDict_SetItemString(out, std::string(name).c_str(), value) < 0) {
-            Py_XDECREF(value);
-            Py_DECREF(out);
+    PatternObject* const pat = as_pattern(self);
+    if (pat->group_index == nullptr) {
+        PyObject* const pairs = pattern_group_names(pat);
+        if (pairs == nullptr) {
             return nullptr;
         }
-        Py_DECREF(value);
+        PyObject* const index = PyDict_New();
+        if (index == nullptr) {
+            return nullptr;
+        }
+        for (Py_ssize_t i = 0; i < PyTuple_Size(pairs); ++i) {
+            PyObject* const pair = PyTuple_GetItem(pairs, i);
+            if (PyDict_SetItem(index, PyTuple_GetItem(pair, 0), PyTuple_GetItem(pair, 1)) < 0) {
+                Py_DECREF(index);
+                return nullptr;
+            }
+        }
+        pat->group_index = index;
     }
-    return out;
+    return PyDict_Copy(pat->group_index);
 }
 
 PyMethodDef pattern_methods[] = {
@@ -2859,6 +2903,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     obj->is_bytes = is_bytes;
     obj->repl_key = nullptr;
     obj->repl_segments = nullptr;
+    obj->group_names = nullptr;
+    obj->group_index = nullptr;
     return reinterpret_cast<PyObject*>(obj);
 }
 
