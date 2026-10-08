@@ -329,7 +329,7 @@ TEST(trailing_la_code_point_body_routed_equals_core)
   };
   const char* texts[] = {
     "héllo wörld, again,", "éé,é", "aéé ééa", "ü,", "\xF0\x9F\x98\x80\x61,\xF0\x9F\x98\x80",
-    "ab\xFF\x63,d", "\xC3,\xA9é,", "", ",", "Āa Āé", "ééé",
+    "ab\xFF\x63,d", "\xC3,\xA9é,", "", ",", "Āa Āé", "ééé", "你好,世界é,中文",
   };
   for (const char* p : patterns) {
     const real::regex rx(p);

@@ -2937,6 +2937,28 @@ namespace real::detail {
     }
 
     /*!
+     * \brief \ref cp_member_high for the trailing-lookaround walk, written out rather than called.
+     *
+     * A second call site of \ref cp_member_high, even from this cold walk, makes GCC stop inlining it into
+     * \ref fill_cp_class_spans, and `\p{sc=Han}+` counted +3 to +9 % instructions on GCC 13, 14 and 15. Runtime only
+     * (the walk is dynamic-only).
+     * \param[in] cp_index Index of the code-point class.
+     * \param[in] cp       Code point above \ref cp_page_max.
+     * \return True when \p cp is a member.
+     */
+    bool cp_member_high_unshared(std::size_t cp_index,
+                                 char32_t    cp)
+    {
+      if (state_.hi_class != static_cast<std::int32_t>(cp_index)) [[unlikely]] {
+        resolve_hi(cp_index);
+      }
+      if (state_.hi_ptr != nullptr) {
+        return state_.hi_ptr->contains(cp);
+      }
+      return !state_.hi_never && cp_class_matches(prog_.cp_classes[cp_index], cp);
+    }
+
+    /*!
      * \brief Fills the state's sparse-hi memo for \p cp_index, the cold half of \ref cp_member_high,
      *        outlined so the per-code-point path stays a class-key compare and a bit test.
      *
@@ -3285,7 +3307,7 @@ namespace real::detail {
                                                const detail::decoded_codepoint dc     {detail::decode_codepoint_strict(text, i)};
                                                const bool                      member {dc.valid
                                                                                        && (dc.cp <= cp_page_max ? cp_member_page(cls, dc.cp)
-                                                                                           : cp_member_high(cls, dc.cp))};
+                                                                                           : cp_member_high_unshared(cls, dc.cp))};
                                                return member ? dc.length : 0;
                                              };
         const auto in_class = [&](std::size_t i) { return width_at(i) != 0; };
