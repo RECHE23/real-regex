@@ -383,13 +383,16 @@ void compute_char_spans(const subject_view& sv, const Py_ssize_t* bytes, Py_ssiz
     if (sv.char_is_byte) {
         return;
     }
-    std::vector<std::size_t> order;
+    // The slots to convert, in byte order. Inline up to 16 groups: a first span read on a non-ASCII subject paid
+    // a heap vector per match.
+    real::detail::small_vec<std::size_t, 32> order;
     for (std::size_t i = 0; i < nslots; ++i) {
         if (bytes[i] >= 0) {
             order.push_back(i);
         }
     }
-    for (std::size_t a = 1; a < order.size(); ++a) {  // insertion sort: tiny n
+    const std::size_t count = order.size();
+    for (std::size_t a = 1; a < count; ++a) {  // insertion sort: tiny n
         const std::size_t key = order[a];
         std::size_t b = a;
         while (b > 0 && bytes[order[b - 1]] > bytes[key]) {
@@ -404,13 +407,14 @@ void compute_char_spans(const subject_view& sv, const Py_ssize_t* bytes, Py_ssiz
     // finds the cursor ahead of the target and restarts at 0 -- correct, just not accelerated.
     Py_ssize_t byte_at = 0;
     Py_ssize_t chars = 0;
-    const bool resumable = cursor != nullptr && !order.empty() && cursor->byte_at <= bytes[order.front()];
+    const bool resumable = cursor != nullptr && count != 0 && cursor->byte_at <= bytes[order[0]];
     if (resumable) {
         byte_at = cursor->byte_at;
         chars = cursor->chars;
     }
-    for (const std::size_t slot : order) {
-        const Py_ssize_t target = bytes[slot];
+    for (std::size_t k = 0; k < count; ++k) {
+        const std::size_t slot   = order[k];
+        const Py_ssize_t  target = bytes[slot];
         while (byte_at < target) {
             chars += (static_cast<unsigned char>(sv.data[byte_at]) & 0xC0) != 0x80 ? 1 : 0;
             ++byte_at;
