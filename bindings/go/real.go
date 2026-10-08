@@ -84,6 +84,14 @@ func cBytes(b []byte) (unsafe.Pointer, func()) {
 	return unsafe.Pointer(unsafe.SliceData(b)), func() {}
 }
 
+// stringBytes views s as bytes without copying it, for a query whose C call only reads the text during the call
+// and keeps nothing (real_match, real_find_all_regexp). Never for a call that keeps it (real_find_iter*), never
+// for a result handed back to the caller, and never for a slice anything appends to: Go strings are immutable.
+// A []byte(s) conversion copies the whole subject on every call.
+func stringBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
 // cCopy is cBytes with a C copy, for a pointer stored where cgo forbids a Go pointer: an array of
 // pointers handed to C (real_set_compile's patterns) may not point into Go memory.
 func cCopy(b []byte) (unsafe.Pointer, func()) {
@@ -133,9 +141,10 @@ func indicesToSpans(idx []int) []C.size_t {
 // shares the C pointer — unlike regexp.Regexp, *r is not a safe clone. noCopy makes
 // that copy a go vet -copylocks diagnostic; the compiler will still accept it.
 type Regexp struct {
-	_    noCopy
-	re   *C.real_regex
-	expr string
+	_       noCopy
+	re      *C.real_regex
+	expr    string
+	ngroups int // capturing groups + 1, read once at Compile: a query needs no cgo call to size its spans
 }
 
 // Compile compiles pattern. Mirrors regexp.Compile's signature and error contract.
@@ -149,7 +158,7 @@ func Compile(pattern string) (*Regexp, error) {
 	if h == nil {
 		return nil, errors.New(C.GoString(&errbuf[0]))
 	}
-	r := &Regexp{re: h, expr: pattern}
+	r := &Regexp{re: h, expr: pattern, ngroups: int(C.real_group_count(h))}
 	runtime.SetFinalizer(r, (*Regexp).Close)
 	return r, nil
 }
@@ -191,7 +200,7 @@ func Match(pattern string, b []byte) (bool, error) {
 // MatchString reports whether s contains any match of pattern, like
 // regexp.MatchString. It is a search, not a full-string match — see FullMatch.
 func MatchString(pattern, s string) (bool, error) {
-	return Match(pattern, []byte(s))
+	return Match(pattern, stringBytes(s))
 }
 
 // Close releases the compiled pattern. Idempotent.
@@ -211,10 +220,13 @@ func (r *Regexp) Close() error {
 	return nil
 }
 
-// groupCount returns (capturing groups + 1), matching real_group_count's own contract.
-// After Close (nil handle) the C ABI returns 0.
+// groupCount returns (capturing groups + 1), matching real_group_count's own contract, and 0 after Close
+// as the C ABI does for a nil handle.
 func (r *Regexp) groupCount() int {
-	return int(C.real_group_count(r.re))
+	if r.re == nil {
+		return 0
+	}
+	return r.ngroups
 }
 
 // groupSlots allocates a spans buffer sized for this pattern's group count.
@@ -293,28 +305,39 @@ func (r *Regexp) FindAllIndex(b []byte, n int) [][]int {
 
 // Match reports whether b contains any match of the expression, like regexp.Regexp.Match.
 func (r *Regexp) Match(b []byte) bool {
-	return r.FindIndex(b) != nil
+	return r.matches(b, C.REAL_MODE_SEARCH)
+}
+
+// matches runs one query that only answers yes or no: real_match takes no spans then, so nothing is sized,
+// allocated or converted.
+func (r *Regexp) matches(text []byte, mode C.int) bool {
+	ctext, freeText := cBytes(text)
+	defer freeText()
+	return C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)), 0, C.size_t(len(text)), mode, nil) == 1
 }
 
 // MatchString reports whether s contains any match of the expression, like
 // regexp.Regexp.MatchString. It is a search, not a full-string match — see FullMatch.
 func (r *Regexp) MatchString(s string) bool {
-	return r.Match([]byte(s))
+	return r.Match(stringBytes(s))
 }
 
 // FindIndex returns the [start,end) of the leftmost match in b, or nil, like
 // regexp.Regexp.FindIndex.
 func (r *Regexp) FindIndex(b []byte) []int {
-	m := r.FindSubmatchIndex(b)
-	if m == nil {
+	ctext, freeText := cBytes(b)
+	defer freeText()
+	spans := r.groupSlots()
+	if C.real_match(r.re, (*C.char)(ctext), C.size_t(len(b)), 0, C.size_t(len(b)), C.REAL_MODE_SEARCH,
+		spanPtr(spans)) != 1 {
 		return nil
 	}
-	return []int{m[0], m[1]}
+	return []int{int(spans[0]), int(spans[1])} // group 0 always participates in a match
 }
 
 // FindStringIndex is FindIndex on a string.
 func (r *Regexp) FindStringIndex(s string) []int {
-	return r.FindIndex([]byte(s))
+	return r.FindIndex(stringBytes(s))
 }
 
 // Find returns the leftmost match in b, or nil if there is none — like regexp.Regexp.Find.
@@ -330,11 +353,11 @@ func (r *Regexp) Find(b []byte) []byte {
 // FindString returns the leftmost match in s, or "" if there is none — like
 // regexp.Regexp.FindString. An empty match and no match are indistinguishable.
 func (r *Regexp) FindString(s string) string {
-	m := r.Find([]byte(s))
-	if m == nil {
+	loc := r.FindIndex(stringBytes(s))
+	if loc == nil {
 		return ""
 	}
-	return string(m)
+	return s[loc[0]:loc[1]]
 }
 
 // FindAll returns successive matches in b, like regexp.Regexp.FindAll. n is the cap
@@ -353,7 +376,7 @@ func (r *Regexp) FindAll(b []byte, n int) [][]byte {
 
 // FindAllString is FindAll on a string, like regexp.Regexp.FindAllString.
 func (r *Regexp) FindAllString(s string, n int) []string {
-	idx := r.FindAllIndex([]byte(s), n)
+	idx := r.FindAllIndex(stringBytes(s), n)
 	if idx == nil {
 		return nil
 	}
@@ -366,7 +389,7 @@ func (r *Regexp) FindAllString(s string, n int) []string {
 
 // FindAllStringIndex is FindAllIndex with regexp's n, on a string.
 func (r *Regexp) FindAllStringIndex(s string, n int) [][]int {
-	return r.FindAllIndex([]byte(s), n)
+	return r.FindAllIndex(stringBytes(s), n)
 }
 
 // Split slices s at matches of the expression, like regexp.Regexp.Split.
@@ -439,7 +462,7 @@ func (r *Regexp) FindSubmatch(b []byte) [][]byte {
 // FindStringSubmatch is FindSubmatch on a string, like regexp.Regexp.FindStringSubmatch.
 // No match is nil, not an empty slice — that is the FAIL a tutorial hits first.
 func (r *Regexp) FindStringSubmatch(s string) []string {
-	return submatchStrings(s, r.FindSubmatchIndex([]byte(s)))
+	return submatchStrings(s, r.FindSubmatchIndex(stringBytes(s)))
 }
 
 // FindStringSubmatchIndex is FindSubmatchIndex on a string, like
@@ -450,7 +473,7 @@ func (r *Regexp) FindStringSubmatch(s string) []string {
 // {value, Index}. This was the one cell missing, with both of its neighbours present — including
 // FindAllStringSubmatchIndex, the harder one.
 func (r *Regexp) FindStringSubmatchIndex(s string) []int {
-	return r.FindSubmatchIndex([]byte(s))
+	return r.FindSubmatchIndex(stringBytes(s))
 }
 
 // FindSubmatchIndex returns the leftmost match's full span plus every group's span
@@ -550,12 +573,12 @@ func (r *Regexp) FindAllSubmatch(b []byte, n int) [][][]byte {
 // regexp.Regexp.FindAllStringSubmatchIndex. n is the cap (0 → nil, <0 → all); an unset group is
 // the pair -1,-1.
 func (r *Regexp) FindAllStringSubmatchIndex(s string, n int) [][]int {
-	return r.FindAllSubmatchIndex([]byte(s), n)
+	return r.FindAllSubmatchIndex(stringBytes(s), n)
 }
 
 // FindAllStringSubmatch is FindAllSubmatch on a string, like regexp.Regexp.FindAllStringSubmatch.
 func (r *Regexp) FindAllStringSubmatch(s string, n int) [][]string {
-	all := r.FindAllSubmatchIndex([]byte(s), n)
+	all := r.FindAllSubmatchIndex(stringBytes(s), n)
 	if all == nil {
 		return nil
 	}
@@ -571,12 +594,7 @@ func (r *Regexp) FindAllStringSubmatch(s string, n int) [][]string {
 // search: `re.MatchString("x")` on pattern "ab" against "xaby" returns true). Exercises
 // real_match's REAL_MODE_FULLMATCH.
 func (r *Regexp) FullMatch(text []byte) bool {
-	ctext, freeText := cBytes(text)
-	defer freeText()
-	spans := r.groupSlots()
-	rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)),
-		0, C.size_t(len(text)), C.REAL_MODE_FULLMATCH, spanPtr(spans))
-	return rc == 1
+	return r.matches(text, C.REAL_MODE_FULLMATCH)
 }
 
 // CanExtend reports whether the match anchored at byte offset start could come out differently if text

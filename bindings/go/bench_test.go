@@ -75,3 +75,62 @@ func benchReplaceAll(b *testing.B, pattern, repl string) {
 
 func BenchmarkReplaceAllWords(b *testing.B)  { benchReplaceAll(b, `[a-z]+`, "X") }
 func BenchmarkReplaceAllGroups(b *testing.B) { benchReplaceAll(b, `(\w)=(\d+)`, `\2:\1`) }
+
+// Short-subject queries: what a call costs beyond its scan. The string forms used to copy the subject into a
+// fresh []byte each call, and the boolean queries to ask C for the group count and allocate spans they drop.
+const shortLine = "contact: alice@example.com today"
+
+func BenchmarkMatchShort(b *testing.B) {
+	re, text := MustCompile(`(\w+)@(\w+)\.com`), []byte(shortLine)
+	for i := 0; i < b.N; i++ {
+		if !re.Match(text) {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkMatchStringShort(b *testing.B) {
+	re := MustCompile(`(\w+)@(\w+)\.com`)
+	for i := 0; i < b.N; i++ {
+		if !re.MatchString(shortLine) {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkMatchStringLong(b *testing.B) {
+	re, text := MustCompile("needle"), string(benchSubject())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !re.MatchString(text) {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkFullMatchShort(b *testing.B) {
+	re, text := MustCompile(`\w+@\w+\.com`), []byte("alice@example.com")
+	for i := 0; i < b.N; i++ {
+		if !re.FullMatch(text) {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkFindStringIndexShort(b *testing.B) {
+	re := MustCompile(`(\w+)@(\w+)\.com`)
+	for i := 0; i < b.N; i++ {
+		if re.FindStringIndex(shortLine) == nil {
+			b.Fatal("no match")
+		}
+	}
+}
+
+func BenchmarkFindStringShort(b *testing.B) {
+	re := MustCompile(`\w+@\w+\.com`)
+	for i := 0; i < b.N; i++ {
+		if re.FindString(shortLine) == "" {
+			b.Fatal("no match")
+		}
+	}
+}
