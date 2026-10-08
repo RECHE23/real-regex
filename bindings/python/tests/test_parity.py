@@ -255,6 +255,22 @@ class TestParity(unittest.TestCase):
                     self.assertIs(type(got), type(want))
                     self.assertEqual(got, want)
 
+    def test_sub_template_cache_never_serves_a_stale_template(self):
+        """sub keeps its last parsed template: alternating templates, an invalid one after a valid one, and a
+        mutable bytes-like template changed between calls must all answer as re does."""
+        rp, rr = real.compile(r"(\w)(\d)"), re.compile(r"(\w)(\d)")
+        for repl in [r"\2\1", r"<\1>", r"\2\1", "", r"\2\1"]:
+            self.assertEqual(rp.sub(repl, "a1 b2"), rr.sub(repl, "a1 b2"), repl)
+        for _ in range(2):
+            with self.assertRaises(real.error):
+                rp.sub(r"\9", "a1")
+            self.assertEqual(rp.sub(r"\2", "a1"), "1")
+        bp, br = real.compile(rb"(\w)(\d)"), re.compile(rb"(\w)(\d)")
+        repl = bytearray(rb"\2")
+        self.assertEqual(bp.sub(repl, b"a1"), br.sub(repl, b"a1"))
+        repl[1:2] = b"1"
+        self.assertEqual(bp.sub(repl, b"a1"), br.sub(repl, b"a1"))
+
     def test_sub_with_group_refs_parity(self):
         """sub() with back-references yields identical results."""
         for pattern, repl in [(r"(\w+)@(\w+)", r"\2/\1"),

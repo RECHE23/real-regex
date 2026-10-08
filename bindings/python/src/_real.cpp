@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <cstdint>
 #include <cstring>
 #include <new>
@@ -92,12 +93,19 @@ constexpr unsigned long PYFLAG_ASCII = 256;
 // Objects
 // ---------------------------------------------------------------------------
 
+struct repl_segment;
+
 struct PatternObject {
     PyObject_HEAD
     PyObject* pattern_obj;  // original str or bytes
     real::regex* rx;
     unsigned long py_flags;
     int is_bytes;
+    // sub's last template, parsed: keyed by the repl object itself (held, so its identity is not reused) and only
+    // an exact str or bytes (immutable); shared so a scan that released the GIL keeps its segments when another
+    // thread replaces them. Reparsing per call cost a rich template ~220 ns over a ~300 ns sub.
+    PyObject* repl_key;
+    std::shared_ptr<const std::vector<repl_segment>>* repl_segments;
 };
 
 // A UTF-8 walk position shared by every Match one scan yields, so converting byte offsets to
@@ -154,6 +162,8 @@ void Pattern_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     PatternObject* pattern = as_pattern(self);
     delete pattern->rx;
+    delete pattern->repl_segments;
+    Py_XDECREF(pattern->repl_key);
     Py_XDECREF(pattern->pattern_obj);
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
@@ -1816,18 +1826,35 @@ int parse_template(PatternObject* pat, std::string_view repl,
 }
 
 // repl text (str or bytes, matching the pattern type) -> UTF-8 view.
-int get_repl_text(PatternObject* pat, PyObject* repl, std::string_view* out) {
+// A replacement's text: a str for a str pattern; for a bytes pattern any bytes-like object, as re takes. bytes is
+// read in place; another buffer (bytearray, memoryview) is copied into `storage`, which must outlive *out, since
+// its exporter may change or release it once the view is released.
+int get_repl_text(PatternObject* pat, PyObject* repl, std::string_view* out, std::string& storage) {
     if (pat->is_bytes != 0) {
-        if (!PyBytes_Check(repl)) {
+        if (PyBytes_Check(repl)) {
+            char* data = nullptr;
+            Py_ssize_t len = 0;
+            if (PyBytes_AsStringAndSize(repl, &data, &len) < 0) {
+                return -1;
+            }
+            *out = {data, static_cast<std::size_t>(len)};
+            return 0;
+        }
+        Py_buffer view;
+        if (PyUnicode_Check(repl) || PyObject_GetBuffer(repl, &view, PyBUF_SIMPLE) < 0) {
+            PyErr_Clear();
             PyErr_SetString(PyExc_TypeError, "expected bytes replacement");
             return -1;
         }
-        char* data = nullptr;
-        Py_ssize_t len = 0;
-        if (PyBytes_AsStringAndSize(repl, &data, &len) < 0) {
+        try {
+            storage.assign(static_cast<const char*>(view.buf), static_cast<std::size_t>(view.len));
+        } catch (...) {
+            PyBuffer_Release(&view);
+            set_cpp_error();
             return -1;
         }
-        *out = {data, static_cast<std::size_t>(len)};
+        PyBuffer_Release(&view);
+        *out = storage;
         return 0;
     }
     if (!PyUnicode_Check(repl)) {
@@ -1907,12 +1934,32 @@ PyObject* sub_impl(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyOb
     const subject_view& sv = subject.sv;
 
     const bool callable = PyCallable_Check(repl) != 0;
-    std::vector<repl_segment> segments;
+    std::shared_ptr<const std::vector<repl_segment>> segments;
     if (!callable) {
-        std::string_view repl_text;
-        if (get_repl_text(pat, repl, &repl_text) < 0 ||
-            parse_template(pat, repl_text, segments) < 0) {
-            return nullptr;
+        if (repl == pat->repl_key) {
+            segments = *pat->repl_segments;
+        } else {
+            try {
+                auto             parsed {std::make_shared<std::vector<repl_segment>>()};
+                std::string_view repl_text;
+                std::string      repl_storage;
+                if (get_repl_text(pat, repl, &repl_text, repl_storage) < 0
+                    || parse_template(pat, repl_text, *parsed) < 0) {
+                    return nullptr;  // an invalid template is never cached: it raises on every call
+                }
+                segments = parsed;
+                if (PyUnicode_CheckExact(repl) || PyBytes_CheckExact(repl)) {
+                    if (pat->repl_segments == nullptr) {
+                        pat->repl_segments = new std::shared_ptr<const std::vector<repl_segment>>();
+                    }
+                    *pat->repl_segments = segments;
+                    PyObject* const previous = pat->repl_key;
+                    pat->repl_key = Py_NewRef(repl);
+                    Py_XDECREF(previous);
+                }
+            } catch (...) {
+                return set_cpp_error();
+            }
         }
     }
 
@@ -1932,9 +1979,9 @@ PyObject* sub_impl(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyOb
         try {
             if (sv.len >= gil_release_collect_min_bytes) {
                 const GilRelease unlocked;
-                run_template_sub(*pat->rx, sv, segments, count, result, done);
+                run_template_sub(*pat->rx, sv, *segments, count, result, done);
             } else {
-                run_template_sub(*pat->rx, sv, segments, count, result, done);  // small: keep the GIL
+                run_template_sub(*pat->rx, sv, *segments, count, result, done);  // small: keep the GIL
             }
         } catch (...) {
             return set_cpp_error();  // ~GilRelease re-acquired the GIL during unwinding
@@ -1958,7 +2005,8 @@ PyObject* sub_impl(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyOb
                     return nullptr;
                 }
                 std::string_view text;
-                if (get_repl_text(pat, value, &text) < 0) {
+                std::string text_storage;
+                if (get_repl_text(pat, value, &text, text_storage) < 0) {
                     Py_DECREF(value);
                     return nullptr;
                 }
@@ -2000,7 +2048,8 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
     PatternObject* pat = as_pattern(match->pattern);
 
     std::string_view repl_text;
-    if (get_repl_text(pat, template_arg, &repl_text) < 0) {  // imposes str/bytes, like sub
+    std::string repl_storage;
+    if (get_repl_text(pat, template_arg, &repl_text, repl_storage) < 0) {  // imposes str / bytes-like, like sub
         return nullptr;
     }
     std::vector<repl_segment> segments;
@@ -2793,6 +2842,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     obj->rx = rx;
     obj->py_flags = py_flags;
     obj->is_bytes = is_bytes;
+    obj->repl_key = nullptr;
+    obj->repl_segments = nullptr;
     return reinterpret_cast<PyObject*>(obj);
 }
 
