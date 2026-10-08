@@ -964,25 +964,25 @@ Py_ssize_t byte_to_char(std::string_view utf8, std::size_t byte_pos) {
 // offsets for a str subject, BYTE offsets for bytes. The attempt runs over text[0:endpos]
 // starting at pos: pos is the VM start, NOT a slice (so \A and ^ without MULTILINE fail
 // at pos>0); endpos truncates the subject to a view. Capture offsets are absolute.
-// The re signature (string, pos=0, endpos=sys.maxsize) from a vectorcall frame. The limited API has no
-// stack-based argument parser, and the tuple-and-dict one builds an argument tuple on every call.
-int parse_region_args(const char* fname, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames,
-                      PyObject** string, Py_ssize_t* pos, Py_ssize_t* endpos) {
-    static constexpr std::array<const char*, 3> keywords {"string", "pos", "endpos"};
-    std::array<PyObject*, 3> slot {};
+// A vectorcall frame's arguments matched to their keywords: slot[j] is the argument for keywords[j], or null.
+// The leading `required` keywords must be given. Each refusal is the TypeError, worded as re words it. The limited
+// API has no stack-based argument parser, and the tuple-and-dict one builds an argument tuple on every call.
+template <std::size_t N>
+int bind_args(const char* fname, const std::array<const char*, N>& keywords, std::size_t required,
+              PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames, std::array<PyObject*, N>& slot) {
     const Py_ssize_t nkw = kwnames == nullptr ? 0 : PyTuple_Size(kwnames);
-    if (nargs > 3) {
-        PyErr_Format(PyExc_TypeError, "%s() takes at most 3 arguments (%zd given)", fname, nargs + nkw);
+    if (nargs > static_cast<Py_ssize_t>(N)) {
+        PyErr_Format(PyExc_TypeError, "%s() takes at most %zu arguments (%zd given)", fname, N, nargs + nkw);
         return -1;
     }
     std::copy(args, args + nargs, slot.begin());
     for (Py_ssize_t k = 0; k < nkw; ++k) {
         PyObject* const key = PyTuple_GetItem(kwnames, k);
         std::size_t j = 0;
-        while (j < keywords.size() && PyUnicode_CompareWithASCIIString(key, keywords[j]) != 0) {
+        while (j < N && PyUnicode_CompareWithASCIIString(key, keywords[j]) != 0) {
             ++j;
         }
-        if (j == keywords.size()) {
+        if (j == N) {
             PyErr_Format(PyExc_TypeError, "%s() got an unexpected keyword argument '%U'", fname, key);
             return -1;
         }
@@ -993,26 +993,43 @@ int parse_region_args(const char* fname, PyObject* const* args, Py_ssize_t nargs
         }
         slot[j] = args[nargs + k];
     }
-    if (slot[0] == nullptr) {
-        PyErr_Format(PyExc_TypeError, "%s() missing required argument 'string' (pos 1)", fname);
+    for (std::size_t j = 0; j < required; ++j) {
+        if (slot[j] == nullptr) {
+            PyErr_Format(PyExc_TypeError, "%s() missing required argument '%s' (pos %zu)", fname, keywords[j], j + 1);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+// An optional integer argument into *out (left as is when absent), converted as the "n" format converts it.
+int as_ssize(PyObject* arg, Py_ssize_t* out) {
+    if (arg == nullptr) {
+        return 0;
+    }
+    PyObject* const index = PyNumber_Index(arg);
+    if (index == nullptr) {
+        return -1;
+    }
+    const Py_ssize_t value = PyLong_AsSsize_t(index);
+    Py_DECREF(index);
+    if (value == -1 && PyErr_Occurred() != nullptr) {
+        return -1;
+    }
+    *out = value;
+    return 0;
+}
+
+// The re signature (string, pos=0, endpos=sys.maxsize).
+int parse_region_args(const char* fname, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames,
+                      PyObject** string, Py_ssize_t* pos, Py_ssize_t* endpos) {
+    static constexpr std::array<const char*, 3> keywords {"string", "pos", "endpos"};
+    std::array<PyObject*, 3>                    slot {};
+    if (bind_args(fname, keywords, 1, args, nargs, kwnames, slot) < 0 || as_ssize(slot[1], pos) < 0
+        || as_ssize(slot[2], endpos) < 0) {
         return -1;
     }
     *string = slot[0];
-    for (std::size_t j = 1; j < slot.size(); ++j) {
-        if (slot[j] == nullptr) {
-            continue;
-        }
-        PyObject* const index = PyNumber_Index(slot[j]);
-        if (index == nullptr) {
-            return -1;
-        }
-        const Py_ssize_t value = PyLong_AsSsize_t(index);
-        Py_DECREF(index);
-        if (value == -1 && PyErr_Occurred() != nullptr) {
-            return -1;
-        }
-        *(j == 1 ? pos : endpos) = value;
-    }
     return 0;
 }
 
@@ -1369,15 +1386,15 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* const* args, Py_ssize_t nar
     return reinterpret_cast<PyObject*>(it);
 }
 
-PyObject* Pattern_split(PyObject* self, PyObject* args, PyObject* kwargs) {
+PyObject* Pattern_split(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
     PatternObject* pat = as_pattern(self);
-    PyObject* string = nullptr;
     Py_ssize_t maxsplit = 0;
-    static const char* const keywords[] = {"string", "maxsplit", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|n", const_cast<char**>(keywords),
-                                     &string, &maxsplit)) {
+    static constexpr std::array<const char*, 2> keywords {"string", "maxsplit"};
+    std::array<PyObject*, 2>                    slot {};
+    if (bind_args("split", keywords, 1, args, nargs, kwnames, slot) < 0 || as_ssize(slot[1], &maxsplit) < 0) {
         return nullptr;
     }
+    PyObject* const string = slot[0];
     subject_ref subject;
     if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
@@ -1872,16 +1889,17 @@ void run_template_sub(const real::regex& rx, const subject_view& sv,
     }
 }
 
-PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_count) {
+PyObject* sub_impl(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames, bool with_count) {
     PatternObject* pat = as_pattern(self);
-    PyObject* repl = nullptr;
-    PyObject* string = nullptr;
     Py_ssize_t count = 0;
-    static const char* const keywords[] = {"repl", "string", "count", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|n", const_cast<char**>(keywords),
-                                     &repl, &string, &count)) {
+    static constexpr std::array<const char*, 3> keywords {"repl", "string", "count"};
+    std::array<PyObject*, 3>                    slot {};
+    if (bind_args(with_count ? "subn" : "sub", keywords, 2, args, nargs, kwnames, slot) < 0
+        || as_ssize(slot[2], &count) < 0) {
         return nullptr;
     }
+    PyObject* const repl   = slot[0];
+    PyObject* const string = slot[1];
     subject_ref subject;
     if (acquire_subject(pat->is_bytes, string, &subject) < 0) {
         return nullptr;
@@ -2024,11 +2042,11 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg) {
                : PyUnicode_DecodeUTF8(result.data(), static_cast<Py_ssize_t>(result.size()), nullptr);
 }
 
-PyObject* Pattern_sub(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return sub_impl(self, args, kwargs, false);
+PyObject* Pattern_sub(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    return sub_impl(self, args, nargs, kwnames, false);
 }
-PyObject* Pattern_subn(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return sub_impl(self, args, kwargs, true);
+PyObject* Pattern_subn(PyObject* self, PyObject* const* args, Py_ssize_t nargs, PyObject* kwnames) {
+    return sub_impl(self, args, nargs, kwnames, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -2148,7 +2166,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"split", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_split)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "split($self, string, maxsplit=0)\n--\n\n"
      "Split the string by occurrences of the pattern.\n\n"
      "Args:\n"
@@ -2159,7 +2177,7 @@ PyMethodDef pattern_methods[] = {
      "Complexity:\n"
      "    Matching is O(len(string)) -- guaranteed linear; never backtracks (ReDoS-safe)."},
     {"sub", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_sub)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "sub($self, repl, string, count=0)\n--\n\n"
      "Replace occurrences of the pattern in the string.\n\n"
      "Args:\n"
@@ -2184,7 +2202,7 @@ PyMethodDef pattern_methods[] = {
      "__class_getitem__($cls, item, /)\n--\n\n"
      "Return a GenericAlias, so Pattern[str] works like re.Pattern[str]."},
     {"subn", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Pattern_subn)),
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "subn($self, repl, string, count=0)\n--\n\n"
      "Replace occurrences and return the result plus the count.\n\n"
      "Args:\n"

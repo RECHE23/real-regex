@@ -891,6 +891,24 @@ class TestParity(unittest.TestCase):
                     result(getattr(rr, name)(*args, **kwargs))
                 with self.assertRaises(type(want.exception), msg=(name, args, kwargs)):
                     result(getattr(rp, name)(*args, **kwargs))
+        for name, good, bad in (
+                ("split", [(("xabab",), {}), (("xabab", 1), {}), ((), {"string": "abab", "maxsplit": 1}),
+                           (("abab", True), {})],
+                 [((), {}), (("a", 1, 2), {}), (("a",), {"foo": 1}), (("a",), {"string": "b"}),
+                  (("a", 1.5), {})]),
+                ("sub", [(("-", "xabab"), {}), (("-", "xabab", 1), {}), ((), {"repl": "-", "string": "ab"}),
+                         (("-",), {"string": "abab", "count": 1})],
+                 [(("-",), {}), (("-", "a", 1, 2), {}), (("-", "a"), {"foo": 1}),
+                  (("-", "a"), {"string": "b"}), (("-", "a", 1.5), {})]),
+                ("subn", [(("-", "xabab"), {}), (("-", "abab"), {"count": 1})], [((), {})])):
+            for args, kwargs in good:
+                self.assertEqual(getattr(rp, name)(*args, **kwargs), getattr(rr, name)(*args, **kwargs),
+                                 (name, args, kwargs))
+            for args, kwargs in bad:
+                with self.assertRaises(Exception) as want:
+                    getattr(rr, name)(*args, **kwargs)
+                with self.assertRaises(type(want.exception), msg=(name, args, kwargs)):
+                    getattr(rp, name)(*args, **kwargs)
         pm, rm = rp.search("xab"), rr.search("xab")
         for name in ("group", "start", "end", "span"):
             for args in ((), (0,), (1,), (2,)):
