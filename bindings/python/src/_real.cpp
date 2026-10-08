@@ -1873,7 +1873,9 @@ void run_template_sub(const real::regex& rx, const subject_view& sv,
             break;
         }
     }
-    result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+    if (done != 0) {  // nothing replaced: the caller hands back the subject, so no copy of it
+        result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+    }
 }
 
 PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_count) {
@@ -1910,7 +1912,7 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
     // spelling a caller arriving from Go's `n` or Rust reaches for to mean "all". The template is
     // still parsed above, so an invalid one still raises here exactly as it does in re.
     if (count < 0) {
-        result.assign(sv.data, static_cast<std::size_t>(sv.len));
+        // done stays 0: the subject itself is the result
     } else if (!callable) {
         // Non-callable: the scan is pure C++ (run_template_sub). On a large subject release
         // the GIL so threads scan in parallel -- the only Python object is the final string,
@@ -1955,22 +1957,23 @@ PyObject* sub_impl(PyObject* self, PyObject* args, PyObject* kwargs, bool with_c
                     break;
                 }
             }
-            result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+            if (done != 0) {
+                result.append(sv.data + last, static_cast<std::size_t>(sv.len - last));
+            }
         } catch (...) {
             return set_cpp_error();
         }
     }
 
-    // Nothing replaced: re hands back the very str or bytes object (a bytes-like subject still gets bytes), and
-    // skipping the decode keeps a no-match sub O(1) past its scan.
+    // Nothing replaced: re hands back the very str or bytes object (a bytes-like subject still gets bytes, built
+    // from the subject: the scans copy nothing then), and skipping the decode keeps a no-match sub O(1) past its
+    // scan.
+    const char* const      out_data {done == 0 ? sv.data : result.data()};
+    const Py_ssize_t       out_len  {done == 0 ? sv.len : static_cast<Py_ssize_t>(result.size())};
     PyObject* out = done == 0 && (PyUnicode_CheckExact(string) || PyBytes_CheckExact(string))
                         ? Py_NewRef(string)
-                        : pat->is_bytes != 0
-                            ? PyBytes_FromStringAndSize(result.data(),
-                                                        static_cast<Py_ssize_t>(result.size()))
-                            : PyUnicode_DecodeUTF8(result.data(),
-                                                   static_cast<Py_ssize_t>(result.size()),
-                                                   nullptr);
+                        : pat->is_bytes != 0 ? PyBytes_FromStringAndSize(out_data, out_len)
+                                             : PyUnicode_DecodeUTF8(out_data, out_len, nullptr);
     if (out == nullptr || !with_count) {
         return out;
     }

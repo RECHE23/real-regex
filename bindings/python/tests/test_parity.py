@@ -248,6 +248,12 @@ class TestParity(unittest.TestCase):
                 out = real.compile(pattern).sub(repl, subject)
                 self.assertIs(type(out), type(re.compile(pattern).sub(repl, subject)))
                 self.assertEqual(out, re.compile(pattern).sub(repl, subject))
+                # The other two scans that may replace nothing: a negative count and a callable replacement.
+                for kwargs in ({"count": -1}, {}):
+                    r = (lambda m: repl) if not kwargs else repl
+                    got, want = real.compile(pattern).sub(r, subject, **kwargs), re.compile(pattern).sub(r, subject, **kwargs)
+                    self.assertIs(type(got), type(want))
+                    self.assertEqual(got, want)
 
     def test_sub_with_group_refs_parity(self):
         """sub() with back-references yields identical results."""
