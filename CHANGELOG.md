@@ -2,6 +2,31 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.6
+
+10.6 (**walks that build no end sentinel, bindings that cross once, Unicode scans that keep their inlining**):
+**THE TABLES ARE RE-RUN AND THE STAMP MOVES TO `2026.10.5` + tree `3c72c9d6`**, on both ISAs, from `6a80b657`
+(2026-10-08, same hosts; six runs on x86-64 for §A and §E, that host having episodes):
+- **§A and §Unicode** (`count_matches`): x86-64 `lookahead` 4.42 → 3.74 ns/B (−15 %, at −14.5 % instructions on
+  GCC 15) and `fields` 1.93 → 1.68 (−13 %, the code-point filler's GCC inlining from 10.5). x86-64 `words [a-z]+`
+  0.86 → 1.22 and `single` 2.20 → 2.49 moved at an unchanged instruction count: placement in that build
+  (`std::regex`'s own cell on the first row +37.5 %). arm64 within 3 % on every §A row; `scx=Cyrl` +5.3 % and
+  `[à-ÿ]+` +4.4 % indistinguishable from layout in a layout-robust A/B.
+- **§E** (`find_iter`, `-O3 -flto`): x86-64 `alternation` −13 %; rows that rose on x86-64 count 1.9 to 4.8 % fewer
+  instructions than at `6a80b657`. arm64 `email` / `ident` +6 to +8 %, indistinguishable from layout through
+  `find_iter` in a REAL-only unit. `date no-match` is a tie on both ISAs.
+- **§B**: every ratio within 4.5 % of the last stamp, all but two higher, but `date · findall groups` 565.32× →
+  613.21×; `sub · dates with refs` read 94.27× / 49.61× / 44.97× across the three runs.
+- **What this train fixed before the stamp**: the code-point trailing-lookaround walk of 10.5 had cost
+  `\p{sc=Han}+` +3.8 / +9.0 / +2.8 % instructions (GCC 13 / 14 / 15) and `[a-z]+(?=[a-z])` through `find_iter`
+  +5.2 % on Apple clang (e5004a4, 6f6c806). Declared, not fixed: GCC 15 alone counts `[a-z]+` and `[0-9]+`
+  +5.1 / +5.8 % instructions since 10.5 (the byte-class filler left out of line in the batched walk), with no
+  slowdown in an alternated timing on x86-64.
+- **Not in a table**: the end sentinel (47bca2c) and the walks that no longer build one (575b9f3), the compat
+  iterators (3cddd3f, 1a10c43), RE2 replace (9f396d4) and every binding change; each measured in its commit and in
+  `docs/release-notes/v2026.10.6.md`.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.5
 
 10.5 (**Unicode lookaheads on the fast route, GCC -O2 builds that inline, a lighter Python match**): **THE TABLES
