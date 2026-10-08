@@ -420,8 +420,13 @@ namespace real {
 
     /*!
      * \brief Constructs the end sentinel.
+     *
+     * User-provided, not `= default`: `end()`'s `return {}` value-initializes, and with a defaulted
+     * constructor that zero-fills the whole object (its VM state included, ~10 KB) before constructing it.
+     * The members a sentinel is read through carry their own initializers (`done_` is true).
      */
-    constexpr basic_match_iterator() = default;
+    constexpr basic_match_iterator() noexcept
+    {}
 
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
     /*!
