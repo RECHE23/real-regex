@@ -27,10 +27,11 @@ struct real_regex
   real::regex rx;
 };
 
+// The cursor alone: an end sentinel is a whole iterator with its own scratch state, built and destroyed on every
+// real_find_iter* only to be compared with; exhausted() answers the same question.
 struct real_iter
 {
   dyn_iter it;
-  dyn_iter end;
 };
 
 struct real_regex_set
@@ -210,7 +211,7 @@ real_iter* real_find_iter(const real_regex* re, const char* text, size_t len)
   }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len));
-    return new real_iter {range.begin(), range.end()};
+    return new real_iter {range.begin()};
   }
   catch (...) {
     return nullptr;
@@ -224,7 +225,7 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
   }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len), start, len);
-    return new real_iter {range.begin(), range.end()};
+    return new real_iter {range.begin()};
   }
   catch (...) {
     return nullptr;
@@ -238,7 +239,7 @@ real_iter* real_find_iter_between(const real_regex* re, const char* text, size_t
   }
   try {
     auto range = re->rx.find_iter(std::string_view(text, len), start, end);
-    return new real_iter {range.begin(), range.end()};
+    return new real_iter {range.begin()};
   }
   catch (...) {
     return nullptr;
@@ -251,7 +252,7 @@ int real_iter_next(real_iter* iter, size_t* spans)
     return -1; // a null cursor means the iterator failed to construct — never dereference it
   }
   try {
-    if (iter->it == iter->end) {
+    if (iter->it.exhausted()) {
       return 0;
     }
     const auto& m {*iter->it};
