@@ -528,19 +528,21 @@ namespace real::compat {
         *this = regex_token_iterator {};
         return *this;
       }
-      const regex_iterator<BidirIt, CharT, Traits> prev {position_};
       if (n_ + 1 < subs_.size()) {
         ++n_; // more fields for the same match
         set_field();
       }
       else {
         n_ = 0;
+        // The suffix is all of this match that the step can still need, and only with a -1 selector: keeping
+        // it, not a copy of the whole iterator (its match vector and shared walk), spares an allocation a step.
+        const value_type suffix {has_m1_ ? position_->suffix() : value_type {}};
         ++position_;
         if (position_ != regex_iterator<BidirIt, CharT, Traits> {}) {
-          set_field();                   // first field of the next match
+          set_field();           // first field of the next match
         }
-        else if (has_m1_ && prev->suffix().length() != 0) {
-          current_     = prev->suffix(); // trailing split field, only when non-empty
+        else if (has_m1_ && suffix.length() != 0) {
+          current_     = suffix; // trailing split field, only when non-empty
           suffix_mode_ = true;
         }
         else {
