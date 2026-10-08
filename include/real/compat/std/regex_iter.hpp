@@ -213,9 +213,7 @@ namespace real::compat {
       if (at_end_ || other.at_end_) {
         return at_end_ == other.at_end_;
       }
-      return re_ == other.re_ && begin_ == other.begin_ && end_ == other.end_ && flags_ == other.flags_
-             && match_.position(0) == other.match_.position(0)
-             && match_.length(0) == other.match_.length(0);
+      return same_position(other);
     }
 
     /*!
@@ -229,6 +227,20 @@ namespace real::compat {
     }
 
   private:
+
+    /*!
+     * \brief \ref operator== between two live iterators.
+     *
+     * Out of line so that `operator==` itself inlines: `it != std::sregex_iterator()` builds and compares an end
+     * sentinel at every step, and with this comparison inline clang kept the whole operator out of line.
+     * \param[in] other A live iterator.
+     * \return Whether both denote the same match of the same iteration.
+     */
+    REAL_NOINLINE bool same_position(const regex_iterator& other) const
+    {
+      return re_ == other.re_ && begin_ == other.begin_ && end_ == other.end_ && flags_ == other.flags_
+             && match_.position(0) == other.match_.position(0) && match_.length(0) == other.match_.length(0);
+    }
 
     //! \brief The REAL walker: an accelerator only, \ref real_pos_ stays the source of truth.
     using walker_type = real::basic_match_iterator<real::detail::dynamic_storage>;
