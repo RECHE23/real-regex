@@ -2,6 +2,17 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.9
+
+10.9 (**how far before a position a match reads**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
+`2026.10.5` + tree `3c72c9d6`.** The train adds `basic_regex::left_context()`, a member that nothing in the
+engine calls, so no search compiles differently.
+- **§A / §E / §Unicode / §B**: no matching code changed; nothing there can move.
+- **§E's rust leg** now resolves `regex` 1.13.1 (cb39f7d); the table keeps its 1.12.4 measurement until the
+  next re-stamp re-runs it.
+- **Not in a table**: `left_context()` is a bound read off the compiled program, not a search.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.8
 
 10.8 (**bindings that keep what they borrow, and read their arguments as their models do**): **THE TABLES ARE
