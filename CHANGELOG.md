@@ -2,6 +2,20 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.7
+
+10.7 (**Unicode lookarounds tested directly, a lighter lazy-DFA miss**): **THE TABLES ARE NOT RE-RUN, AND THE
+STAMP STAYS AT `2026.10.5` + tree `3c72c9d6`.** Each change was measured before and after (2026-10-08 and
+2026-10-09):
+- **§A / §E / §Unicode**: no table row has a lookaround over a Unicode class; the train's engine changes count
+  the same instructions on every §A row on GCC 13, GCC 14, clang 19 and GCC 15 but `\w+(?=,)`, which is in no
+  table (+1.8 % on GCC 15).
+- **§B**, `bench.py` median of three on arm64 against the stamped table: every ratio within 3.1 % but the
+  known-unstable `sub · dates with refs`.
+- **Not in a table**: lookarounds over a Unicode class −28 to −66 % instructions (430d136), a lazy DFA's cold
+  miss path (eb4b2d3); measured in each commit and in `docs/release-notes/v2026.10.7.md`.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.6
 
 10.6 (**walks that build no end sentinel, bindings that cross once, Unicode scans that keep their inlining**):
