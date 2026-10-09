@@ -71,14 +71,18 @@ func (s *RegexSet) Close() error {
 
 // Size returns the number of patterns in the set.
 func (s *RegexSet) Size() int {
-	return int(C.real_set_size(s.set))
+	n := int(C.real_set_size(s.set))
+	runtime.KeepAlive(s) // s.set is the last use of s: without this the finalizer may free it mid-call
+	return n
 }
 
 // IsMatch reports whether any pattern matches text at least once (stops at the first hit).
 func (s *RegexSet) IsMatch(text []byte) bool {
 	ctext, freeText := cBytes(text)
 	defer freeText()
-	return C.real_set_is_match(s.set, (*C.char)(ctext), C.size_t(len(text))) == 1
+	hit := C.real_set_is_match(s.set, (*C.char)(ctext), C.size_t(len(text))) == 1
+	runtime.KeepAlive(s)
+	return hit
 }
 
 // Matches returns which patterns match text at least once, in construction order.
@@ -92,6 +96,7 @@ func (s *RegexSet) Matches(text []byte) []bool {
 		hitsPtr = &hits[0]
 	}
 	rc := C.real_set_matches(s.set, (*C.char)(ctext), C.size_t(len(text)), hitsPtr)
+	runtime.KeepAlive(s)
 	out := make([]bool, n)
 	if rc == 0 {
 		for i, h := range hits {

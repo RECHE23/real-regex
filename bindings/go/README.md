@@ -78,7 +78,7 @@ could not express before.
 | `QuoteMeta` | same | delegates to `regexp.QuoteMeta`, not C++ `compat::re2::QuoteMeta` (that one escapes a larger set) |
 | `Match` / `MatchString` (package) | same | compile + search; the handle is closed before return |
 | `(*Regexp) String` | same | the source text, kept on the Go value (the C ABI has no getter); Close does not clear it |
-| `(*Regexp) Close` | *(none — GC only)* | releases the C++ object explicitly; a finalizer is a safety net, not a substitute |
+| `(*Regexp) Close` | *(none — GC only)* | releases the C++ object explicitly; a finalizer is a safety net, not a substitute. Not concurrently with another call on the same `Regexp` |
 | `(*Regexp) NumSubexp` / `SubexpNames` / `SubexpIndex` | same | `SubexpIndex` is -1 for an empty or unknown name, as in `regexp` |
 | `(*Regexp) Match` / `MatchString` | same | a *search*, not a full-string match — see FullMatch |
 | `(*Regexp) Find` / `FindString` / `FindIndex` / `FindStringIndex` | same | leftmost match; `Find` is nil on no match |

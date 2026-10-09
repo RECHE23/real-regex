@@ -131,8 +131,10 @@ func indicesToSpans(idx []int) []C.size_t {
 }
 
 // Regexp wraps a compiled real_regex handle. Safe for concurrent use by multiple goroutines
-// (the C ABI's own thread-safety contract: a const handle only reads). Close releases the
-// underlying C++ object; a runtime.SetFinalizer is a safety net, not a substitute for it.
+// (the C ABI's own thread-safety contract: a const handle only reads), Close excepted: it must
+// not run while another goroutine is still in a call. Close releases the underlying C++ object;
+// a runtime.SetFinalizer is a safety net for a forgotten Close, and every method keeps r alive
+// past its C call (runtime.KeepAlive) so that net never frees a handle in use.
 //
 // expr is the source text, kept here because the C ABI has no pattern getter. String()
 // reads this field; it is not recovered from the handle. A value copy of Regexp still
@@ -276,6 +278,7 @@ func (r *Regexp) readSubexpNames() []string {
 		C.real_group_name(r.re, C.size_t(g), &buf[0], C.size_t(len(buf)))
 		names[g] = C.GoStringN(&buf[0], C.int(nameLen))
 	}
+	runtime.KeepAlive(r)
 	return names
 }
 
@@ -321,7 +324,9 @@ func (r *Regexp) Match(b []byte) bool {
 func (r *Regexp) matches(text []byte, mode C.int) bool {
 	ctext, freeText := cBytes(text)
 	defer freeText()
-	return C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)), 0, C.size_t(len(text)), mode, nil) == 1
+	ok := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)), 0, C.size_t(len(text)), mode, nil) == 1
+	runtime.KeepAlive(r) // r.re is the last use of r: without this the finalizer may free it mid-call
+	return ok
 }
 
 // MatchString reports whether s contains any match of the expression, like
@@ -336,8 +341,10 @@ func (r *Regexp) FindIndex(b []byte) []int {
 	ctext, freeText := cBytes(b)
 	defer freeText()
 	spans := r.groupSlots()
-	if C.real_match(r.re, (*C.char)(ctext), C.size_t(len(b)), 0, C.size_t(len(b)), C.REAL_MODE_SEARCH,
-		spanPtr(spans)) != 1 {
+	rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(b)), 0, C.size_t(len(b)), C.REAL_MODE_SEARCH,
+		spanPtr(spans))
+	runtime.KeepAlive(r)
+	if rc != 1 {
 		return nil
 	}
 	return []int{int(spans[0]), int(spans[1])} // group 0 always participates in a match
@@ -493,6 +500,7 @@ func (r *Regexp) FindSubmatchIndex(text []byte) []int {
 	spans := r.groupSlots()
 	rc := C.real_match(r.re, (*C.char)(ctext), C.size_t(len(text)),
 		0, C.size_t(len(text)), C.REAL_MODE_SEARCH, spanPtr(spans))
+	runtime.KeepAlive(r)
 	if rc != 1 {
 		return nil
 	}
@@ -550,6 +558,7 @@ func (r *Regexp) FindAllSubmatchIndex(b []byte, n int) [][]int {
 		}
 		got := C.real_find_all_regexp(r.re, (*C.char)(ctext), C.size_t(len(b)), &pos, &prev, &buf[0],
 			C.size_t(want))
+		runtime.KeepAlive(r)
 		if got == sizeMax || got == 0 {
 			break
 		}
@@ -617,7 +626,9 @@ func (r *Regexp) CanExtend(text []byte, start int) bool {
 	ctext, freeText := cBytes(text)
 	defer freeText()
 	// An internal error (-1) answers true as well: waiting is the side that loses nothing.
-	return C.real_can_extend(r.re, (*C.char)(ctext), C.size_t(len(text)), C.size_t(start)) != 0
+	extends := C.real_can_extend(r.re, (*C.char)(ctext), C.size_t(len(text)), C.size_t(start)) != 0
+	runtime.KeepAlive(r)
+	return extends
 }
 
 // dollarProbe is a dummy match so regexp.Expand itself classifies templates.
@@ -671,6 +682,7 @@ func (r *Regexp) ReplaceAll(text, repl []byte) ([]byte, error) {
 	// CLOSED handle errors through the ABI's own null-re check -- one source of truth for that message.
 	// The output buffer is a guess; a longer expansion is sized by the first call and filled by a second.
 	out := make([]byte, len(text)+len(text)/2+64)
+	defer runtime.KeepAlive(r) // expand reads r.re after r's last use here
 	expand := func() C.size_t {
 		return C.real_expand_all(r.re, (*C.char)(ctext), C.size_t(len(text)), spanPtr(spans), C.size_t(nslots),
 			C.size_t(len(matches)), (*C.char)(crepl), C.size_t(len(repl)),
