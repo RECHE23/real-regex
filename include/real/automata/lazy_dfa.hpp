@@ -1761,10 +1761,11 @@ namespace real::detail {
         return cached;
       }
       ++stats_.misses;
-      const std::vector<std::int32_t> pcs  {state_pcs_[state / stride_]}; // copy: intern() below may realloc state_pcs_
-      std::vector<std::int32_t>       next;
-      visit_marks&                    seen {begin_visit()};
-      const std::uint8_t              ctx  {class_ctx_[cls]};
+      // A reference: only intern_any() below grows state_pcs_, after the last read of this row.
+      const std::vector<std::int32_t>& pcs  {state_pcs_[state / stride_]};
+      std::vector<std::int32_t>        next;
+      visit_marks&                     seen {begin_visit()};
+      const std::uint8_t               ctx  {class_ctx_[cls]};
       for (const std::int32_t pc : pcs) {
         if (consumes(pc, byte)) {
           close_any(pc + consumed_width(pc), next, seen, ctx);
@@ -2209,11 +2210,12 @@ namespace real::detail {
       if (cached != no_transition) {
         return cached;
       }
-      std::vector<std::int32_t> pcs {state_pcs_[state / stride_]}; // copy: intern() below may realloc state_pcs_
-      const auto                ctx {static_cast<std::uint8_t>(-1 - pcs.back())};
-      pcs.pop_back();
-      std::vector<std::int32_t> out;
-      visit_marks&              seen {begin_visit()};
+      // A view: only intern() below grows state_pcs_, after the last read of this row.
+      const std::vector<std::int32_t>&     row  {state_pcs_[state / stride_]};
+      const auto                           ctx  {static_cast<std::uint8_t>(-1 - row.back())};
+      const std::span<const std::int32_t>  pcs  {row.data(), row.size() - 1U};
+      std::vector<std::int32_t>            out;
+      visit_marks&                         seen {begin_visit()};
       quit_hit_ = false;
       for (const std::int32_t pc : pcs) {
         const instr& in {code_[static_cast<std::size_t>(pc)]};
@@ -2970,11 +2972,12 @@ namespace real::detail {
       if (cached != no_transition) {
         return cached;
       }
-      std::vector<std::int32_t> pcs  {state_pcs_[state]};                          // copy: intern may realloc
-      const auto                ctx  {static_cast<std::uint8_t>(-1 - pcs.back())}; // mark_context appends it last
-      pcs.pop_back();
-      visit_marks&              seen {begin_visit()};
-      std::vector<std::int32_t> set;
+      // A view: only intern() below grows state_pcs_, after the last read of this row.
+      const std::vector<std::int32_t>&     row  {state_pcs_[state]};
+      const auto                           ctx  {static_cast<std::uint8_t>(-1 - row.back())}; // mark_context appends it last
+      const std::span<const std::int32_t>  pcs  {row.data(), row.size() - 1U};
+      visit_marks&                         seen {begin_visit()};
+      std::vector<std::int32_t>            set;
       quit_hit_ = false;
       for (const std::int32_t entry : pcs) {
         const std::int32_t pc {is_pending(entry) ? pending_base - entry : entry};
@@ -3037,9 +3040,9 @@ namespace real::detail {
                             std::uint8_t  byte,
                             std::uint8_t  ctx)
     {
-      const std::vector<std::int32_t> pcs  {state_pcs_[state]};
-      std::vector<std::int32_t>       next;
-      visit_marks&                    seen {begin_visit()};
+      const std::vector<std::int32_t>& pcs  {state_pcs_[state]}; // only intern() below grows state_pcs_
+      std::vector<std::int32_t>        next;
+      visit_marks&                     seen {begin_visit()};
       for (const std::int32_t pc : pcs) {
         for (std::size_t k = rev_consume_at_[static_cast<std::size_t>(pc)];
              k < rev_consume_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
@@ -3156,9 +3159,9 @@ namespace real::detail {
       if (cached != no_transition) {
         return cached;
       }
-      const std::vector<std::int32_t> pcs  {state_pcs_[state]}; // copy: intern may realloc
-      std::vector<std::int32_t>       next;
-      visit_marks&                    seen {begin_visit()};
+      const std::vector<std::int32_t>& pcs  {state_pcs_[state]}; // only intern() below grows state_pcs_
+      std::vector<std::int32_t>        next;
+      visit_marks&                     seen {begin_visit()};
       for (const std::int32_t pc : pcs) {
         for (std::size_t k = rev_consume_at_[static_cast<std::size_t>(pc)];
              k < rev_consume_at_[static_cast<std::size_t>(pc) + 1]; ++k) {
