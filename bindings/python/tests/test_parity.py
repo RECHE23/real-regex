@@ -852,7 +852,8 @@ class TestParity(unittest.TestCase):
         too: a message that matches while `pos` is missing would pass a text comparison and still
         leave a caller unable to point at the fault.
         """
-        templates = [r"\x", r"\q", r"\401", r"\9", r"\g", r"\g<", r"\g<1x>", r"\g<99>"]
+        templates = [r"\x", r"\q", r"\401", r"\9", r"\g", r"\g<", r"\g<1x>", r"\g<99>",
+                     r"\g<a-b>", r"\g<x y>", r"\g<-1>", "\\g<a'b>", r"\g<y>"]
         for template in templates:
             with self.subTest(template=template):
                 def fault(module):
@@ -868,7 +869,28 @@ class TestParity(unittest.TestCase):
         for template in (r"\\", r"\g<1>", r"\1"):
             with self.subTest(template=template):
                 self.assertEqual(real.sub(r"(a)", template, "a"), re.sub(r"(a)", template, "a"))
-        self.assertEqual(len(templates), 8)  # denominator
+        self.assertEqual(len(templates), 13)  # denominator
+
+    def test_template_group_name_follows_the_3_12_rule(self):
+        r"""A \g<name> that is neither ASCII digits nor an identifier, or not ASCII under bytes,
+        is real.error at the name on every version: docs/divergences.dox div_module_surface.
+
+        CPython 3.11 accepted these with a DeprecationWarning and 3.12 refused them, so re is the
+        oracle from 3.12 on and the 3.11 side is pinned by value instead.
+        """
+        cases = [("(a)", r"\g<+1>", "a"), ("(a)", r"\g<١>", "a"), (b"(a)", b"\\g<\xe9>", b"a"),
+                 (b"(a)", b"\\g<a'\xe9>", b"a")]
+        for pattern, template, text in cases:
+            with self.subTest(template=template):
+                with self.assertRaises(real.error) as caught:
+                    real.sub(pattern, template, text)
+                self.assertEqual(caught.exception.pos, 3)
+                self.assertTrue(caught.exception.msg.startswith("bad character in group name "))
+                if sys.version_info >= (3, 12):
+                    with self.assertRaises(re.error) as expected:
+                        re.sub(pattern, template, text)
+                    self.assertEqual(caught.exception.msg, expected.exception.msg)
+        self.assertEqual(real.sub(b"(?P<x>a)", rb"[\g<x>]", b"a"), b"[a]")
 
     def test_template_error_is_caught_by_the_same_except_as_re(self):
         r"""What a template error RAISES, judged by the handler that catches it.

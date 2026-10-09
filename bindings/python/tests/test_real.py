@@ -953,6 +953,37 @@ class TestIntentionalDivergences(unittest.TestCase):
         for module in (real, stdlib):
             self.assertEqual(module.search(r"(?!(a))b", "b").groups(), (None,))
 
+    def test_lone_surrogates_have_no_utf8_form(self):
+        r"""A lone surrogate is refused where re matches it: the engine reads UTF-8, which has no
+        encoding for U+D800..U+DFFF.
+
+        docs/divergences.dox div_surrogates. In a pattern, either spelling raises real.error at
+        the surrogate's position, so fallback=True delegates it to re; in a subject or a str
+        template it raises UnicodeEncodeError, a ValueError. Pinned in BOTH directions.
+        """
+        import re as stdlib
+        for pattern, pos in [("ab\ud800", 2), ("\udc00", 0), (r"ab\ud800", None)]:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(real.error) as caught:
+                    real.compile(pattern)
+                if pos is not None:  # the escaped spelling reports where its parser stood
+                    self.assertEqual(caught.exception.pos, pos)
+                self.assertEqual(caught.exception.pattern, pattern)
+                delegated = real.compile(pattern, fallback=True)
+                self.assertEqual(delegated.engine, "re")
+                self.assertEqual(delegated.search("xab\ud800\udc00 ").span(),
+                                 stdlib.search(pattern, "xab\ud800\udc00 ").span())
+        with self.assertRaises(real.error) as caught:
+            real.RegexSet(["a", "b\udfff"])
+        self.assertEqual(caught.exception.pos, 1)
+        for call in (lambda: real.search(".", "\ud800"),
+                     lambda: real.sub("a", "\ud800", "a"),
+                     lambda: real.compile("a").split("x\udc00")):
+            with self.assertRaises(UnicodeEncodeError):
+                call()
+        self.assertEqual(stdlib.search(".", "\ud800").span(), (0, 1))
+        self.assertEqual(stdlib.sub("a", "\ud800", "a"), "\ud800")
+
     def test_inverted_region_never_matches(self):
         r"""pos past endpos: no match, and no leaked standard-library exception.
 

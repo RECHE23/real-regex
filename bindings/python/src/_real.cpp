@@ -1579,6 +1579,32 @@ struct repl_segment {
 
 void set_error(const char* message) { PyErr_SetString(error_type, message); }
 
+//! A str pattern's UTF-8, or nullptr with an error set. A lone surrogate has no UTF-8 form: it
+//! raises `real.error` at its position, as its escaped spelling `\\ud800` does, so that the
+//! fallback policy can delegate the pattern to `re`.
+const char* pattern_utf8(PyObject* pattern, Py_ssize_t* len) {
+    const char* data = PyUnicode_AsUTF8AndSize(pattern, len);
+    if (data != nullptr || PyErr_ExceptionMatches(PyExc_UnicodeEncodeError) == 0) {
+        return data;
+    }
+    PyErr_Clear();
+    const Py_ssize_t count = PyUnicode_GetLength(pattern);
+    Py_ssize_t       pos   = 0;
+    while (pos < count) {
+        const Py_UCS4 ch = PyUnicode_ReadChar(pattern, pos);
+        if (ch >= 0xD800U && ch <= 0xDFFFU) {
+            break;
+        }
+        ++pos;
+    }
+    PyObject* exc = PyObject_CallFunction(error_type, "sOn", "surrogate code point", pattern, pos);
+    if (exc != nullptr) {
+        PyErr_SetObject(error_type, exc);
+        Py_DECREF(exc);
+    }
+    return nullptr;
+}
+
 //! The inline-flag bits this binding implements. `re.L` and `re.DEBUG` have their own door, and it
 //! precedes every use of this one, so neither can reach the unknown-bit report below.
 constexpr unsigned long PYFLAG_KNOWN = PYFLAG_IGNORED_BIT_1 | PYFLAG_IGNORECASE | PYFLAG_MULTILINE |
@@ -1644,6 +1670,24 @@ void set_template_error(const std::string& message, std::string_view repl, std::
   }
   PyErr_SetObject(error_type, exc);
   Py_DECREF(exc);
+}
+
+// A template group name re refuses, quoted as re quotes it: by the repr of the name, which re reads
+// from a bytes template as Latin-1 and quotes there with ascii() -- so a name holding ' takes double
+// quotes, and a bytes name's é reads \xe9.
+void set_bad_group_name(std::string_view name, std::string_view repl, std::size_t pos, int is_bytes) {
+  PyObject* const text   = (is_bytes != 0)
+                             ? PyUnicode_DecodeLatin1(name.data(), static_cast<Py_ssize_t>(name.size()), nullptr)
+                             : PyUnicode_DecodeUTF8(name.data(), static_cast<Py_ssize_t>(name.size()), "replace");
+  PyObject* const quoted = (text == nullptr) ? nullptr : (is_bytes != 0) ? PyObject_ASCII(text) : PyObject_Repr(text);
+  Py_XDECREF(text);
+  Py_ssize_t      size   = 0;
+  const char*     utf8   = (quoted != nullptr) ? PyUnicode_AsUTF8AndSize(quoted, &size) : nullptr;
+  if (utf8 != nullptr) {
+    set_template_error("bad character in group name " + std::string(utf8, static_cast<std::size_t>(size)),
+                       repl, pos, is_bytes);
+  }
+  Py_XDECREF(quoted);
 }
 
 // The escape hatch, named where the user meets the wall -- and where the wall has no door, the
@@ -1822,16 +1866,7 @@ int parse_template(PatternObject* pat, std::string_view repl,
                 group = 0;
                 for (const char digit : name) {
                     if (digit < '0' || digit > '9') {
-                        // `i` sits on the character that failed; re quotes to the closing `>`, so scan for it
-                        // rather than stopping at the cursor -- and never past the template's end.
-                        std::size_t close {name_begin};
-                        while (close < repl.size() && repl[close] != '>') {
-                            ++close;
-                        }
-                        set_template_error("bad character in group name '"
-                                               + std::string(repl.substr(name_begin, close - name_begin))
-                                               + "'",
-                                           repl, name_begin, pat->is_bytes);
+                        set_bad_group_name(name, repl, name_begin, pat->is_bytes);
                         return -1;
                     }
                     group = (group * 10) + (digit - '0');
@@ -1839,6 +1874,30 @@ int parse_template(PatternObject* pat, std::string_view repl,
             } else {
                 const std::size_t named_group_index = pat->rx->group_index(name);
                 if (named_group_index == real::npos) {
+                    // re refuses a name that is not an identifier before looking it up: `\g<a-b>`
+                    // is re.error, not IndexError. A bytes name must also be ASCII.
+                    const bool ascii = std::all_of(name.begin(), name.end(), [](char ch) {
+                        return static_cast<unsigned char>(ch) < 0x80U;
+                    });
+                    PyObject* const text = (pat->is_bytes != 0 && !ascii) ? nullptr
+                                           : (pat->is_bytes != 0)
+                                               ? PyUnicode_DecodeLatin1(name.data(),
+                                                                        static_cast<Py_ssize_t>(name.size()), nullptr)
+                                               : PyUnicode_DecodeUTF8(name.data(),
+                                                                      static_cast<Py_ssize_t>(name.size()), nullptr);
+                    PyObject* const verdict    = (text != nullptr) ? PyObject_CallMethod(text, "isidentifier", nullptr)
+                                                                   : nullptr;
+                    const int       identifier = (pat->is_bytes != 0 && !ascii) ? 0
+                                                 : (verdict != nullptr)         ? PyObject_IsTrue(verdict)
+                                                                                : -1;
+                    Py_XDECREF(verdict);
+                    Py_XDECREF(text);
+                    if (identifier == 0) {
+                        set_bad_group_name(name, repl, name_begin, pat->is_bytes);
+                    }
+                    if (identifier != 1) {
+                        return -1;
+                    }
                     // IndexError, NOT real.error. re raises IndexError for an unknown group NAME in
                     // a template (re/_parser.py's parse_template does it explicitly) while keeping
                     // re.error for an out-of-range NUMBER -- two exception types for the same class
@@ -1848,8 +1907,9 @@ int parse_template(PatternObject* pat, std::string_view repl,
                     // re.error, so raising it here left no single except able to catch both
                     // libraries: `except re.error` missed re, `except IndexError` missed us.
                     // The name is quoted in the message because re quotes it.
-                    PyErr_Format(PyExc_IndexError, "unknown group name '%.*s'",
-                                 static_cast<int>(name.size()), name.data());
+                    // Built here rather than by PyErr_Format: its %.*s arrived in Python 3.12.
+                    PyErr_SetString(PyExc_IndexError,
+                                    ("unknown group name '" + std::string(name) + "'").c_str());
                     return -1;
                 }
                 group = static_cast<Py_ssize_t>(named_group_index);
@@ -2718,7 +2778,7 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
         Py_ssize_t len = 0;
         int this_is_bytes = 0;
         if (PyUnicode_Check(p)) {
-            data = PyUnicode_AsUTF8AndSize(p, &len);
+            data = pattern_utf8(p, &len);
             if (data == nullptr) {
                 Py_DECREF(p);
                 Py_DECREF(iterator);
@@ -2853,7 +2913,7 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     Py_ssize_t len = 0;
     int is_bytes = 0;
     if (PyUnicode_Check(pattern)) {
-        data = PyUnicode_AsUTF8AndSize(pattern, &len);
+        data = pattern_utf8(pattern, &len);
         if (data == nullptr) {
             return nullptr;
         }
