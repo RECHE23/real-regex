@@ -540,8 +540,8 @@ Two traps and one lesson worth recording:
   a failed candidate — `((.))a`, which the exhaustive corpus flagged with 22440 divergences. **The linearity
   guard is the forward backstop (a candidate before the last confirm's forward reach abandons the scan to the
   core), not the reverse bound.** It read as a missing quality heuristic; it was a one-line wiring bug. (rust's
-  own reverse-suffix optimization had a sibling leftmost bug, found by REAL's differential fuzzer:
-  [rust-lang/regex#1373](https://github.com/rust-lang/regex/pull/1373) — the symmetry is instructive.)
+  own reverse-suffix optimization had a sibling leftmost bug, found by REAL's differential fuzzer and fixed
+  upstream in [rust-lang/regex#1364](https://github.com/rust-lang/regex/pull/1364) — the symmetry is instructive.)
 
 Parked follow-ups, named: an **alternation-sibling** extraction (a literal common to every top-level branch,
 `foo|foobar`), and a **multi-literal** set (memmem-of-several) for patterns with no single required literal.
