@@ -1853,6 +1853,47 @@ namespace real {
     }
 
     /*!
+     * \brief How far before a position a match there may read: an upper bound, in bytes.
+     *
+     * `match(text, pos)` reads `text` from `pos - left_context()` on, and nothing earlier: a lookbehind
+     * reads back as far as it can consume, and `\b`, `\B`, `\<`, `\>`, a line start and `\A` read what
+     * precedes the position. So a caller that keeps only part of a text -- a lexer reading it in pieces
+     * -- keeps this many bytes before where it matches next, and the answer is the same as on the whole
+     * text. 0 when the pattern reads nothing before where it starts (nor whether it starts the text).
+     *
+     * \return The bound.
+     */
+    [[nodiscard]] constexpr std::size_t left_context() const noexcept
+    {
+      const detail::program_view view   {raw_program()};
+      std::size_t                behind {0};
+      for (const detail::lookaround_sub& sub : view.lookarounds) {
+        // Lookarounds do not nest, so the widest lookbehind bounds them all.
+        if (sub.direction == detail::look_dir::behind && static_cast<std::size_t>(sub.l_max) > behind) {
+          behind = static_cast<std::size_t>(sub.l_max);
+        }
+      }
+      bool reads_left {behind != 0};
+      for (const detail::instr& in : view.code) {
+        if (in.op == detail::opcode::assert_position) {
+          switch (static_cast<detail::assert_kind>(in.arg8)) {
+            case detail::assert_kind::text_end:
+            case detail::assert_kind::text_end_or_final_newline:
+            case detail::assert_kind::line_end:
+            case detail::assert_kind::line_end_cr:
+              break;
+            default:
+              reads_left = true;
+              break;
+          }
+        }
+      }
+      // The point assertions read one code point back: four bytes at most. A lookbehind's own start
+      // can hold one, so they add to its reach rather than share it.
+      return reads_left ? behind + 4U : 0U;
+    }
+
+    /*!
      * \brief Resolves a group name to its number.
      * \param[in] name The group name.
      * \return The group number, or \ref real::npos if unknown.
