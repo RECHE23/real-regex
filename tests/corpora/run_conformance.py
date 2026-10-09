@@ -386,8 +386,8 @@ def main():
         if not path.exists():
             continue
         manifest = _fowler_manifest(name, path)
-        cases = load_cases_dat(path, manifest)
-        record("fowler/" + name, manifest, cases, 0)
+        cases, filtered = load_cases_dat(path, manifest, with_filtered=True)
+        record("fowler/" + name, manifest, cases, filtered)
 
     print("\n=== TOTALS ===", report["totals"])
     print("=== BUG BUCKET ({}) — every one goes to triage before any fix ===".format(len(bugs)))

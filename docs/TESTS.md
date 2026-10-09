@@ -31,9 +31,9 @@ resolves to exactly one status:
   a raw-byte or non-UTF-8 haystack); filtered at import and counted.
 - **bug** — an unexplained disagreement with `re`.
 
-**Result — 727 / 785 in-contract cases pass, 58 documented divergences, 0 bugs.**
+**Result — 746 / 800 in-contract cases pass, 54 documented divergences, 0 bugs.**
 
-In-contract means scored against `re`: a pass, a documented divergence, or a bug. Filtered (API we do not offer) and `out_of_contract` (origin semantics the oracle does not share) are counted apart. The 58 divergences are not silent — `run_conformance.py` maps each to a `divergences.dox` section (`div_property` for `\p{…}`, `div_inline_flags` for `(?U)`, `div_empty_iteration_capture` for the nullable-loop residue). A published count this runner does not reproduce is a red.
+In-contract means scored against `re`: a pass, a documented divergence, or a bug. Filtered (API we do not offer) and `out_of_contract` (origin semantics the oracle does not share) are counted apart. The 54 divergences are not silent — `run_conformance.py` maps each to a `divergences.dox` section (`div_property` for `\p{…}`, `div_inline_flags` for `(?U)`, `div_empty_iteration_capture` for the nullable-loop residue). A published count this runner does not reproduce is a red.
 
 | Corpus | In-contract pass | intentional_divergence | out_of_contract | filtered |
 | --- | --- | --- | --- | --- |
@@ -50,14 +50,19 @@ In-contract means scored against `re`: a pass, a documented divergence, or a bug
 | rust/empty | 19 / 19 | — | — | — |
 | rust/utf8 | 1 / 1 | — | — | 27 |
 | rust/anchored · substring · bytes | — | — | — | 42 (all API-out) |
-| fowler/basic | 180 / 180 | — | 30 | — |
-| fowler/nullsubexpr | 49 / 53 | 4 | 5 | — |
-| fowler/repetition | 53 / 53 | — | 38 | — |
+| fowler/basic | 203 / 203 | — | 3 | 4 |
+| fowler/nullsubexpr | 21 / 21 | — | 29 | 8 |
+| fowler/repetition | 77 / 77 | — | 14 | — |
 
 The `out_of_contract` count on the Fowler corpora is expected: those are AT&T **POSIX** (leftmost-longest)
 tests, and REAL, like `re`, is leftmost-first — the disagreeing rows are quarantined by the manifest's
-`semantics` field, not scored as failures. The four `intentional_divergence` rows in `nullsubexpr` are
-the nullable-loop final-iteration capture (the `div_empty_iteration_capture` divergences section) (RE2 / Rust / Go lineage).
+`semantics` field, not scored as failures; the nullable-loop rows of `nullsubexpr`, where REAL's final-iteration
+capture differs from `re`'s (the `div_empty_iteration_capture` divergences section), are among them, since
+their stored POSIX outcome disagrees with `re` too. The lines are read as Go's `regexp` reads them: fields
+split on runs of tabs, `SAME`, the `$` escapes, and only the `E` (extended) and `L` (literal) modes run; the
+`filtered` column counts the lines left, which are basic-regex (`B`) only. An outcome that lists fewer groups
+than the pattern has constrains only those. Until SciForge 2026.10.1 the reader split on single tabs, so
+most rows were scored against an empty input; these counts replace those.
 
 **Found and fixed by this net:** the nullable-loop leftmost-first bug — a greedy `*` over an empty-first
 alternation branch (`(?:|a)*`) matched greedily where leftmost-first requires preferring the empty
