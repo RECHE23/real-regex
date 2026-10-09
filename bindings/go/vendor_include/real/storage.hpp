@@ -479,7 +479,6 @@ namespace real {
     public:
 
       using value_type = T;           //!< Element type.
-      using size_type_ = std::size_t; //!< Size type (for std-container API compat).
 
       /*!
        * \brief Constructs an empty vector in the inline state.
@@ -1374,12 +1373,6 @@ namespace real {
 
       //! \brief Capture-slot storage, sized exactly to the program's slot count (no heap).
       using slot_storage = static_vec<std::size_t, slot_count>;
-      //! \brief IL guard fields for this storage (see \ref static_il_guard_fields).
-      using il_guard_fields = static_il_guard_fields;
-
-      //! \brief No IL fields: the route is not compiled for this pattern (see \ref wants_inner_literal).
-      using no_il_guard_fields = static_no_il_guard_fields;
-
       /*!
        * \brief Whether the inner-literal route is worth compiling into this pattern's `run()`.
        *
