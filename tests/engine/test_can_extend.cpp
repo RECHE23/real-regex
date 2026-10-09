@@ -6,6 +6,8 @@
 #include <real/real.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -98,4 +100,48 @@ TEST(can_extend_is_false_once_the_text_decides)
   EXPECT(real::regex {"\\w+\\b"}.can_extend("ab", 0)); // the boundary reads the next character
   EXPECT(real::regex {"é+"}.can_extend("é\xC3", 0));   // a code point cut in half
   EXPECT(real::regex {"x"}.can_extend("", 3));         // an anchor in text still to come
+}
+
+// basic_regex::left_context: the text before pos - left_context() never changes match(text, pos). A
+// caller that drops it -- a lexer keeping only the text it has not consumed -- gets the same answer,
+// spans shifted by what it dropped, and a pattern that reads nothing to the left reports 0.
+TEST(left_context_bounds_what_a_match_reads_before_its_start)
+{
+  const std::vector<std::string_view> patterns {
+    R"((?<=@)\d+)", R"(\b\w+)", R"(\B\d)", "^a", "(?m)^a", "(?<!ab)c", "(?<=é)x", R"(\<w)", R"(w\>)",
+    "a(?<=ba)b", R"(\Aa)", R"((?=\b)x)", "[a-z]+(?<=xy)", R"((?<=\d{2})[a-z])"};
+  const std::string_view alphabet[] {"@", "a", "b", "1", "é", "\n", "\r", "x", "y", "w", " "};
+  std::size_t            compared   {0};
+  std::size_t            narrowed   {0};
+  std::uint32_t          seed       {0x2F6Bu};
+  for (const std::string_view source : patterns) {
+    const real::regex re   {source};
+    const std::size_t left {re.left_context()};
+    EXPECT(left > 0);
+    for (int round {0}; round < 60; ++round) {
+      std::string text;
+      const int   length {static_cast<int>(seed % 17U)};
+      for (int k {0}; k < length; ++k) {
+        seed  = (seed * 1103515245U) + 12345U;
+        text += alphabet[(seed >> 16U) % std::size(alphabet)];
+      }
+      seed = (seed * 1103515245U) + 12345U;
+      for (std::size_t pos {0}; pos <= text.size(); ++pos) {
+        const std::size_t        kept  {pos < left ? pos : left};
+        const std::size_t        drop  {pos - kept};
+        std::vector<std::size_t> whole {spans(re, text, pos)};
+        for (std::size_t& at : whole) {
+          at -= drop;
+        }
+        EXPECT(spans(re, std::string_view {text}.substr(drop), kept) == whole);
+        ++compared;
+        narrowed += static_cast<std::size_t>(drop > 0);
+      }
+    }
+  }
+  EXPECT(compared > 7000U);
+  EXPECT(narrowed > 1000U); // the sweep really drops text, not only short prefixes
+  for (const std::string_view plain : {"abc", "x$", "a(?=b)", "(?m)a$", R"(\d+\Z)"}) {
+    EXPECT_EQ(real::regex {plain}.left_context(), std::size_t {0});
+  }
 }
