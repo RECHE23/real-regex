@@ -1276,13 +1276,17 @@ class TestParity(unittest.TestCase):
     def test_match_lastindex_lastgroup_regs_parity(self):
         """Match.lastindex / .lastgroup / .regs == re across flat, nested, alternation,
         optional and named groups. lastindex is the last group to CLOSE (re semantics), not
-        the highest index -- ((a)(b)) -> 1, (a*)(b*) on '' -> 2, ((a*)) on '' -> 1."""
+        the highest index -- ((a)(b)) -> 1, (a*)(b*) on '' -> 2, ((a*)) on '' -> 1, and a loop
+        closes a lower group last -- (?:(a)|(b))+ on 'ba' -> 1."""
         cases = [
             (r"(a)(b)", "ab"), (r"((a)(b))", "ab"), (r"(a)|(b)", "b"), (r"(a)|(b)", "a"),
             (r"(a)(b)?", "a"), (r"(a)(b)?", "ab"), (r"(a*)(b*)", ""), (r"((a*))", ""),
             (r"(a)(b)(c)", "abc"), (r"((a)(b))(c)", "abc"), (r"(a(b(c)))", "abc"),
             (r"(?P<x>a)(?P<y>b)", "ab"), (r"(?P<x>a)(?P<y>b)?", "a"),
             (r"(?P<outer>(?P<inner>a))", "a"), (r"x", "x"), (r"(a)(b)?(c)", "ac"),
+            (r"(a)()", "a"), (r"((a)())", "a"), (r"(?:(a)|(b))+", "ba"), (r"(?:(a)|(b))+", "ab"),
+            (r"(?:(a)|(b)|(c))+", "cab"), (r"(?:(?P<x>a)|(?P<y>b))+", "ba"),
+            (r"(?:((a)|(b)))+", "ba"),
         ]
         for pattern, text in cases:
             with self.subTest(pattern=pattern, text=text):

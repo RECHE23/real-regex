@@ -827,16 +827,19 @@ PyMethodDef match_methods[] = {
 };
 
 // re.Match.lastindex: index of the last capturing group to CLOSE in this match -- the re
-// semantics are "last marked", NOT the highest index (((a)(b)) -> 1, not 3). Read it off the
-// program's close-save offsets: scanning in offset order, the last participating close-save
-// (an odd slot, group >= 1) wins. This is exact (it also resolves zero-width cases, where the
-// spans alone cannot tell nesting from sequence). -1 means no group matched (Python None).
+// semantics are "last marked", NOT the highest index (((a)(b)) -> 1, not 3). A forward match
+// closes its groups in nondecreasing end order, so the group with the greatest end closed last;
+// a loop can close a lower group after a higher one ((?:(a)|(b))+ over "ba" -> 1). Groups that
+// end at the same offset closed in the order of their close-saves in the program (nesting:
+// ((a)()) -> 1; sequence: (a)() -> 2), which spans alone cannot tell apart. -1 means no group
+// matched (Python None).
 Py_ssize_t match_lastindex_value(MatchObject* match) {
     PatternObject*                   pat   = as_pattern(match->pattern);
     const real::detail::program_view prog  = pat->rx->raw_program();
     const Py_ssize_t* const          spans = byte_spans(match);
     const auto                       count = static_cast<std::size_t>(match->nslots);
     Py_ssize_t                       last  = -1;
+    Py_ssize_t                       end   = -1;
     for (const real::detail::instr& in : prog.code) {
         if (in.op != real::detail::opcode::save) {
             continue;
@@ -846,8 +849,9 @@ Py_ssize_t match_lastindex_value(MatchObject* match) {
             continue;  // an opening save, or group 0's closing save
         }
         const std::size_t group = (slot - 1U) / 2U;
-        if ((2U * group) < count && spans[2U * group] >= 0) {
-            last = static_cast<Py_ssize_t>(group);  // participated; a later offset overrides
+        if ((2U * group) < count && spans[2U * group] >= 0 && spans[(2U * group) + 1U] >= end) {
+            last = static_cast<Py_ssize_t>(group);  // a later close-save at the same end overrides
+            end  = spans[(2U * group) + 1U];
         }
     }
     return last;
