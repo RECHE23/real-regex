@@ -68,6 +68,7 @@ namespace real::detail {
     alternation_pair_candidates, //!< Candidates the alternation pair filter left to verify.
     ahead_table_rows,            //!< Rows the unbounded-lookahead tables were filled with.
     behind_walk_steps,           //!< Bytes the lookbehind walks stepped.
+    behind_atom_steps,           //!< Continuation bytes a one-atom lookbehind receded over.
     dfa_span_batches,            //!< Batches the lazy-DFA span filler produced.
     dfa_leases_taken,            //!< DFA set leases taken.
     class_folds,                 //!< Case folds the compiler computed for a class (a fold-cache hit costs none).

@@ -3341,23 +3341,16 @@ namespace real::detail {
         // body opcode per call (a quarter of `[a-z]+(?=[a-z])` over prose). Force-inlining it instead
         // measured a regression (see basic_match_iterator::advance).
         const lookaround_sub& la_sub    {prog_.lookarounds[sub_id]};
-        const instr*          la_simple {nullptr};
-        if (la_sub.code_length == 2) {
-          const instr& body {prog_.code[static_cast<std::size_t>(la_sub.code_offset)]};
-          if (body.op == opcode::byte || body.op == opcode::klass
-              || (body.op == opcode::klass_cp && !prog_.byte_mode)) {
-            la_simple = &body;
-          }
-        }
-        const auto la_at = [&](std::size_t e) {
-                             if (la_simple == nullptr) {
-                               return lookaround_holds(sub_id, e);
-                             }
-                             const bool matched {la_sub.direction == look_dir::behind
+        const instr* const    la_simple {single_atom_body(la_sub)};
+        const auto            la_at = [&](std::size_t e) {
+                                        if (la_simple == nullptr) {
+                                          return lookaround_holds(sub_id, e);
+                                        }
+                                        const bool matched {la_sub.direction == look_dir::behind
                                                    ? single_class_behind(*la_simple, e)
                                                    : single_class_ahead(*la_simple, e)};
-                             return matched != la_sub.negative;
-                           };
+                                        return matched != la_sub.negative;
+                                      };
         const auto try_ends = [&](std::size_t ms, std::size_t me) -> bool {
                                 for (std::size_t e = me; e > ms; e = prev_end(e)) {
                                   if (la_at(e)) {
@@ -8083,17 +8076,12 @@ namespace real::detail {
                                                   std::size_t   pos)
     {
       const lookaround_sub& sub {prog_.lookarounds[sub_id]};
-      // Peephole: a single-width body is exactly [one consuming op; match] (code_length 2): test it
-      // directly, several times cheaper. Negation applies to the result, so boundary positions flip right.
-      if (sub.code_length == 2) {
-        const instr& body   {prog_.code[static_cast<std::size_t>(sub.code_offset)]};
-        const bool   direct {body.op == opcode::byte || body.op == opcode::klass
-                             || (body.op == opcode::klass_cp && !prog_.byte_mode)};
-        if (direct) {
-          const bool matched {sub.direction == look_dir::behind ? single_class_behind(body, pos)
-                                                                : single_class_ahead(body, pos)};
-          return sub.negative ? !matched : matched;
-        }
+      // Peephole: a one-atom body is tested directly, several times cheaper. Negation applies to the
+      // result, so boundary positions flip right.
+      if (const instr* const body {single_atom_body(sub)}; body != nullptr) {
+        const bool matched {sub.direction == look_dir::behind ? single_class_behind(*body, pos)
+                                                              : single_class_ahead(*body, pos)};
+        return sub.negative ? !matched : matched;
       }
       bool matched {false};
       if (sub.direction == look_dir::behind) {
@@ -8130,6 +8118,24 @@ namespace real::detail {
     }
 
     /*!
+     * \brief The one consuming instruction of a lookaround body that is a single atom, or null.
+     *
+     * Such a body is `[byte | klass; match]` (two slots) or, in text mode, `[klass_cp; three continuation
+     * slots; match]` (five: the compiler always emits the chain), so a code-point class is matched
+     * by `klass_cp` alone.
+     * \param[in] sub The lookaround sub-program.
+     * \return The instruction to test directly, or null when the body needs the sub-simulation.
+     */
+    [[nodiscard]] constexpr const instr* single_atom_body(const lookaround_sub& sub) const
+    {
+      const instr& body {prog_.code[static_cast<std::size_t>(sub.code_offset)]};
+      if (sub.code_length == 2) {
+        return body.op == opcode::byte || body.op == opcode::klass ? &body : nullptr;
+      }
+      return sub.code_length == 5 && body.op == opcode::klass_cp && !prog_.byte_mode ? &body : nullptr;
+    }
+
+    /*!
      * \brief L1 peephole — does \p body match the code point / byte ending EXACTLY at \p pos (behind)?
      *        The defining lookbehind trap: the match must END at \p pos, so the code point is the one whose
      *        aligned start s gives `s + length == pos` (byte mode: `pos - 1`).
@@ -8145,9 +8151,12 @@ namespace real::detail {
       }
       if (body.op == opcode::klass_cp) {
         std::size_t s {pos - 1};
-        while (s > 0 && (static_cast<std::uint8_t>(text_[s]) & 0xC0U) == 0x80U) {
+        // At most three continuation bytes back: a longer run is malformed, and the bound keeps one test
+        // from scanning the subject.
+        while (s > 0 && pos - s < 4U && (static_cast<std::uint8_t>(text_[s]) & 0xC0U) == 0x80U) {
           --s; // recede over UTF-8 continuation bytes to the code point's aligned start
         }
+        note(counter::behind_atom_steps, pos - 1U - s);
         const detail::decoded_codepoint dc {detail::decode_codepoint_strict(text_, s)};
         return dc.valid && s + static_cast<std::size_t>(dc.length) == pos
                && cp_class_matches_idx(body.arg16, dc.cp);

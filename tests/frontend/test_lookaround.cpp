@@ -610,3 +610,74 @@ TEST(lookaround_bound_is_named_in_bytes)
   const real::regex fits {"(?<=" + pattern.substr(4, std::size_t {2} *127U) + ")a"}; // 127 of them: 254 bytes
   EXPECT(fits.search("x").matched() == false);
 }
+
+// A one-atom lookaround body is tested directly (pike_vm::single_atom_body): a byte or byte class, or a
+// code-point class, which the compiler emits as five slots. Each pattern is checked against its `(?:B|B)`
+// twin, which no peephole recognises and the sub-simulation evaluates, at every start and in every mode,
+// over multi-byte, four-byte and malformed text (a run of continuation bytes longer than three included).
+TEST(lookaround_one_atom_body_equals_the_sub_simulation)
+{
+  const char* bodies[] = {R"(\w)", R"(\p{L})", R"([é-ü])", R"(\p{Han})", R"(\d)", R"(é)", R"([^a])"};
+  const char* shapes[] = {"(?=%s)", "(?!%s)", "(?<=%s)", "(?<!%s)"};
+  const char* texts[]  = {
+    "héllo wörld, 中文 x1", "\xC3\xA9\x80\x80\x80\x80x", "\x80\x80\x80\x80\x80\x80" "a", "\xF0\x9F\x98\x80" "a\xC3",
+    "aé中\xE4\xB8", "", "x", "\xC3" "x\xC3\xA9",
+    "\xC1\x81" "x", // an overlong `A`: invalid, though it decodes to a word code point
+  };
+  // `%s` in \p form replaced by \p with.
+  const auto fill = [](std::string_view form, std::string_view with) {
+                      const std::size_t at {form.find("%s")};
+                      return std::string(form.substr(0, at)).append(with).append(form.substr(at + 2));
+                    };
+  std::size_t peephole {0};
+  for (const char* body : bodies) {
+    for (const char* shape : shapes) {
+      const std::string fast_la {fill(shape, body)};
+      const std::string slow_la {fill(shape, std::string("(?:") + body + "|" + body + ")")};
+      // `\C` (one raw byte, allow_raw_byte) next to the lookaround evaluates it inside a code point and on
+      // a malformed one.
+      for (const std::string& wrap : {std::string("%sx"), std::string("x%s"), std::string("\\w+%s"), std::string("%s\\w"),
+                                      std::string("%s\\C"), std::string("\\C%s")}) {
+        const real::regex fast(fill(wrap, fast_la), real::flags::allow_raw_byte);
+        const real::regex slow(fill(wrap, slow_la), real::flags::allow_raw_byte);
+        for (const auto& la : fast.raw_program().lookarounds) {
+          const auto& op {fast.raw_program().code[static_cast<std::size_t>(la.code_offset)].op};
+          peephole += (la.code_length == 2 || (la.code_length == 5 && op == real::detail::opcode::klass_cp)) ? 1U : 0U;
+        }
+        for (const std::string_view t : texts) {
+          EXPECT_EQ(fast.count_matches(t), slow.count_matches(t));
+          for (std::size_t pos {0}; pos <= t.size(); ++pos) {
+            const auto a {fast.search(t, pos)};
+            const auto b {slow.search(t, pos)};
+            EXPECT_EQ(a.matched(), b.matched());
+            if (a.matched() && b.matched()) {
+              EXPECT_EQ(a.start(), b.start());
+              EXPECT_EQ(a.end(), b.end());
+            }
+            EXPECT_EQ(fast.match(t, pos).matched(), slow.match(t, pos).matched());
+            EXPECT_EQ(fast.fullmatch(t, pos).matched(), slow.fullmatch(t, pos).matched());
+          }
+        }
+      }
+    }
+  }
+  // The five code-point classes take the peephole in every shape and wrap; `é` (two bytes) and `[^a]` (a
+  // byte-level UTF-8 automaton) are the twins that must not, compared all the same.
+  EXPECT_EQ(peephole, 5U * 4U * 6U);
+}
+
+// The one-atom lookbehind recedes over at most three continuation bytes. Unbounded, a negative lookbehind
+// tested after every byte of a run of continuation bytes walked back to the run's start each time: the
+// count below grew with the square of the run.
+TEST(one_atom_lookbehind_recede_is_bounded)
+{
+  const real::regex rx(R"(\C(?<!\p{L}))", real::flags::allow_raw_byte);
+  for (const std::size_t n : {std::size_t {1000}, std::size_t {4000}}) {
+    const std::string text(n, '\x80');
+    real::detail::tally(real::detail::counter::behind_atom_steps) = 0;
+    EXPECT_EQ(rx.count_matches(text), n);
+    const std::uint64_t steps {real::detail::tally(real::detail::counter::behind_atom_steps).load()};
+    EXPECT(steps > 0U);       // the peephole ran (else this test proves nothing)
+    EXPECT(steps <= 3U * n);  // at most three steps a test
+  }
+}
