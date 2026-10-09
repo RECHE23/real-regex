@@ -542,6 +542,14 @@ TEST(capi_expand_all_splices_what_real_expand_gives_per_match)
   EXPECT_EQ(real_expand_all(re, "a-a-", 4, ordered, 4, 2, "<\\1>", 4, nullptr, 0, err, sizeof(err)), size_t {8});
   EXPECT_EQ(real_expand_all(re, "a-a-", 4, reversed, 4, 2, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
   EXPECT(std::string_view {err}.find("out of order") != std::string_view::npos);
+  // Each match's pairs are checked at the stride they are read: with an odd nspans a flat pass checked
+  // (1,2) (SIZE_MAX,100) (3,4) and let match 1's (100,3) through, read past the subject.
+  constexpr size_t odd[] {1, 2, SIZE_MAX, 100, 3, 4};
+  EXPECT_EQ(real_expand_all(re, "abcd", 4, odd, 3, 2, "<\\0>", 4, nullptr, 0, err, sizeof(err)), SIZE_MAX);
+  EXPECT_EQ(std::string_view(err), std::string_view("span outside the subject, or inverted"));
+  EXPECT_EQ(real_expand_all(re, "abcd", 4, odd, (SIZE_MAX / 2) + 1, 2, "x", 1, nullptr, 0, err, sizeof(err)),
+            SIZE_MAX);
+  EXPECT_EQ(std::string_view(err), std::string_view("nspans * nmatches overflows"));
   EXPECT_EQ(real_expand_all(re, "a-a-", 4, overlapping, 4, 2, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);
   EXPECT(std::string_view {err}.find("out of order") != std::string_view::npos);
   EXPECT_EQ(real_expand_all(re, "a-a-", 4, outside, 4, 1, "x", 1, nullptr, 0, err, sizeof(err)), SIZE_MAX);

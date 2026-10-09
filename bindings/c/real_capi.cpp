@@ -529,13 +529,13 @@ size_t real_sub(const real_regex* re, const char* text, size_t len,
     write_err(errbuf, errbuf_len, "null re/text/repl");
     return static_cast<size_t>(-1);
   }
-  std::vector<sub_segment> segments;
-  std::string              parse_err;
-  if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
-    write_err(errbuf, errbuf_len, parse_err.c_str());
-    return static_cast<size_t>(-1);
-  }
   try {
+    std::vector<sub_segment> segments;
+    std::string              parse_err;
+    if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
+      write_err(errbuf, errbuf_len, parse_err.c_str());
+      return static_cast<size_t>(-1);
+    }
     const std::string_view subject(text, len);
     std::string             result;
     std::size_t              last {0};
@@ -641,33 +641,39 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
     write_err(errbuf, errbuf_len, "null re/text/repl/spans");
     return static_cast<size_t>(-1);
   }
-  std::vector<sub_segment> segments;
-  std::string              parse_err;
-  if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
-    write_err(errbuf, errbuf_len, parse_err.c_str());
+  try {
+    std::vector<sub_segment> segments;
+    std::string              parse_err;
+    if (!parse_sub_template(re, std::string_view(repl, repl_len), segments, parse_err)) {
+      write_err(errbuf, errbuf_len, parse_err.c_str());
+      return static_cast<size_t>(-1);
+    }
+    // Every COMPLETE pair in the caller's buffer, before a byte is expanded. The header promises that
+    // "a span pair outside [0, len] or inverted" is an error, with no reservation, and until now the
+    // check followed the parsed TEMPLATE: a pair the template did not name was never looked at. That
+    // is the wrong perimeter for this door, and the header says why in its own rationale -- the caller
+    // SUPPLIES the matches, because its flavour enumerates them differently from real_sub's. So a
+    // binding off by one in a group its template happens not to reference is exactly the class the
+    // sentence announces, and exactly the class that got through.
+    //
+    // A purely literal template with a corrupt buffer is refused too -- the promise is about the SPANS,
+    // not about what the template reads. The expansion below reads only pairs spans_valid has passed.
+    if (!spans_valid(spans, nspans, len)) {
+      write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
+      return static_cast<size_t>(-1);
+    }
+    std::string result;
+    const char* err {nullptr};
+    if (!append_expansion(segments, text, spans, nspans, result, err)) {
+      write_err(errbuf, errbuf_len, err);
+      return static_cast<size_t>(-1);
+    }
+    return deliver(result, out, outlen);
+  }
+  catch (...) {
+    write_err(errbuf, errbuf_len, "internal error");
     return static_cast<size_t>(-1);
   }
-  // Every COMPLETE pair in the caller's buffer, before a byte is expanded. The header promises that
-  // "a span pair outside [0, len] or inverted" is an error, with no reservation, and until now the
-  // check followed the parsed TEMPLATE: a pair the template did not name was never looked at. That
-  // is the wrong perimeter for this door, and the header says why in its own rationale -- the caller
-  // SUPPLIES the matches, because its flavour enumerates them differently from real_sub's. So a
-  // binding off by one in a group its template happens not to reference is exactly the class the
-  // sentence announces, and exactly the class that got through.
-  //
-  // A purely literal template with a corrupt buffer is refused too -- the promise is about the SPANS,
-  // not about what the template reads. The expansion below reads only pairs spans_valid has passed.
-  if (!spans_valid(spans, nspans, len)) {
-    write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
-    return static_cast<size_t>(-1);
-  }
-  std::string result;
-  const char* err {nullptr};
-  if (!append_expansion(segments, text, spans, nspans, result, err)) {
-    write_err(errbuf, errbuf_len, err);
-    return static_cast<size_t>(-1);
-  }
-  return deliver(result, out, outlen);
 }
 
 size_t real_expand_all(const real_regex* re, const char* text, size_t len,
@@ -681,6 +687,10 @@ size_t real_expand_all(const real_regex* re, const char* text, size_t len,
     write_err(errbuf, errbuf_len, "null re/text/repl/spans");
     return static_cast<size_t>(-1);
   }
+  if (nmatches != 0 && nspans > SIZE_MAX / nmatches) {
+    write_err(errbuf, errbuf_len, "nspans * nmatches overflows");
+    return static_cast<size_t>(-1);
+  }
   try {
     std::vector<sub_segment> segments;
     std::string              parse_err;
@@ -688,9 +698,13 @@ size_t real_expand_all(const real_regex* re, const char* text, size_t len,
       write_err(errbuf, errbuf_len, parse_err.c_str());
       return static_cast<size_t>(-1);
     }
-    if (!spans_valid(spans, nspans * nmatches, len)) {
-      write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
-      return static_cast<size_t>(-1);
+    // Per match, at the stride the expansion reads them: one flat pass over nspans * nmatches checks
+    // other pairs than those read whenever nspans is odd.
+    for (std::size_t m = 0; m < nmatches; ++m) {
+      if (!spans_valid(spans + (m * nspans), nspans, len)) {
+        write_err(errbuf, errbuf_len, "span outside the subject, or inverted");
+        return static_cast<size_t>(-1);
+      }
     }
     std::string result;
     result.reserve(len);
