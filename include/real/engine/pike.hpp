@@ -2408,9 +2408,7 @@ namespace real::detail {
      * \param[in,out] cache       The per-regex immutables.
      * \param[in]     class_index Index into the program's interned byte classes.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold)) // see verify_class_row
-#endif
+    REAL_COLD // see verify_class_row
     void fill_class_row(detail::regex_immutables& cache,
                         std::size_t               class_index) const
     {
@@ -2423,9 +2421,7 @@ namespace real::detail {
      * \param[in,out] cache    The per-regex immutables.
      * \param[in]     cp_index Index into the program's code-point classes.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold)) // see verify_class_row
-#endif
+    REAL_COLD // see verify_class_row
     void fill_cp_ascii_row(detail::regex_immutables& cache,
                            std::size_t               cp_index) const
     {

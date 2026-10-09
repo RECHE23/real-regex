@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "real/core/config.hpp"
 #include "real/core/program.hpp"
 #include "real/automata/utf8_ranges.hpp"
 
@@ -561,9 +562,7 @@ namespace real::detail {
    * \param[in]     after Program counter the accept edges jump to (the construct's successor).
    * \param[in,out] seen  Byte-range intern table, shared across every occurrence in one program.
    */
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only, never on a search path
-#endif
+  REAL_BUILD_COLD // build-time only, never on a search path
   constexpr void emit_utf8_trie(byte_program&        bp,
                                 const utf8_trie&     trie,
                                 std::int32_t         after,
@@ -850,9 +849,7 @@ namespace real::detail {
   // search. An ASCII-only expansion holds only on an ASCII subject: pre-scanning costs more than the search
   // (the VM state is fresh per search), and the viable shape (bytes >= 0x80 to a "cannot answer" class, a
   // second program on the first non-ASCII subject) changes DFA state semantics, not a local edit.
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only, never on a search path
-#endif
+  REAL_BUILD_COLD // build-time only, never on a search path
   constexpr byte_program build_byte_program(const program_view& prog,
                                             bool                keep_assertions = false,
                                             std::size_t         max_size        = max_byte_program_size)
@@ -1005,9 +1002,7 @@ namespace real::detail {
    * \param[in] classes The byte classes it indexes.
    * \return The alphabet: a byte-to-class map plus the class count.
    */
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only, never on a search path
-#endif
+  REAL_BUILD_COLD // build-time only, never on a search path
   inline constexpr lazy_byte_alphabet compute_lazy_alphabet(std::span<const instr>      code,
                                                             std::span<const char_class> classes)
   {
@@ -2303,9 +2298,7 @@ namespace real::detail {
      *         \ref quit_pos.
      */
     template <bool Anchored>
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((noinline, cold)) // out of the hot scans' bodies: a program without assertions never calls it
-#endif
+    REAL_COLD // out of the hot scans' bodies: a program without assertions never calls it
     std::conditional_t<Anchored, anchored_result, std::size_t> scan_look(std::string_view text,
                                                                          std::size_t      start)
     {

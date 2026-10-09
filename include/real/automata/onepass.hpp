@@ -41,6 +41,7 @@
 #include "real/engine/prefilter.hpp"
 #include "real/engine/assert_eval.hpp"
 #include "real/automata/lazy_dfa.hpp"
+#include "real/core/config.hpp"
 #include "real/core/program.hpp"
 
 namespace real::detail {
@@ -550,9 +551,7 @@ namespace real::detail {
      *        hash-consing is not enough; refinement runs to a fixpoint. Merged nodes share their masks by
      *        construction, and each keeps a dense edge row.
      */
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((cold)) // build-time only, never on a search path
-#endif
+    REAL_BUILD_COLD // build-time only, never on a search path
     constexpr void minimize()
     {
       const std::size_t          n       {nodes_.size()};
