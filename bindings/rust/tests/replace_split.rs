@@ -74,3 +74,22 @@ fn regex_builder_flags_agree() {
     let text = "café";
     assert_eq!(re.find(text).map(|m| m.as_str()), std.find(text).map(|m| m.as_str()), "unicode(false) \\w");
 }
+
+/// Template edge cases against the `regex` crate, through `str` and `bytes`: an unclosed `${`, an empty
+/// `${}`, a bare or trailing `$`.
+#[test]
+fn template_edge_cases_match_the_crate() {
+    let templates = ["$", "$$", "${", "${x", "${1", "${}", "$1a", "${1}a", "$a$", "x$", "${name}", "$ name", "$${1}", "${1${2}}"];
+    let ours = real_regex::Regex::new(r"(?P<name>\w)(\d)").unwrap();
+    let theirs = regex::Regex::new(r"(?P<name>\w)(\d)").unwrap();
+    for t in templates {
+        assert_eq!(ours.replace_all("a1 b2", t), theirs.replace_all("a1 b2", t), "template {t:?}");
+    }
+    let ours = real_regex::bytes::Regex::new(r"(?P<name>\w)(\d)").unwrap();
+    let theirs = regex::bytes::Regex::new(r"(?P<name>\w)(\d)").unwrap();
+    for t in templates {
+        let (a, b) = (ours.replace_all(b"a1 b2", t.as_bytes()), theirs.replace_all(b"a1 b2", t.as_bytes()));
+        assert_eq!(a, b, "bytes template {t:?}");
+    }
+}
+

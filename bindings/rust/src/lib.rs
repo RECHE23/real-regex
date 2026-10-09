@@ -352,6 +352,16 @@ pub struct Regex {
 unsafe impl Send for Regex {}
 unsafe impl Sync for Regex {}
 
+// A `start` inside a multi-byte character searches from the next character boundary, as the `regex` crate does: no
+// match of a `str` pattern can start inside a character, and a span there would panic when its text is read.
+fn char_boundary_at_or_after(text: &str, start: usize) -> usize {
+    let mut s = start;
+    while s < text.len() && !text.is_char_boundary(s) {
+        s += 1;
+    }
+    s
+}
+
 impl Regex {
     /// Compile `pattern`. Returns the engine's error message if the pattern is invalid or cannot be run
     /// linearly (the strict policy).
@@ -433,6 +443,7 @@ impl Regex {
     }
 
     fn raw<'r, 't>(&'r self, text: &'t str, start: Option<usize>) -> SpanCursor<'r, 't> {
+        let start = start.map(|s| char_boundary_at_or_after(text, s));
         #[cfg(feature = "fallback")]
         if let Some(fb) = &self.fallback {
             return SpanCursor::Fallback {
@@ -459,6 +470,7 @@ impl Regex {
     // engine, and an empty one is searched from `start` with no previous end to be adjacent to. Fills `buf`
     // (2 * ngroups slots) and returns group 0's span.
     fn first_into(&self, text: &str, start: usize, buf: &mut [usize]) -> Option<(usize, usize)> {
+        let start = char_boundary_at_or_after(text, start);
         // SAFETY: the handle is live for &self, the pointer/length pair describes `text`, and `buf` holds the
         // 2 * ngroups slots real_match fills.
         let rc = unsafe {
@@ -1516,21 +1528,22 @@ fn expand(caps: &Captures, template: &str, dst: &mut String) {
             rest = stripped;
             continue;
         }
-        let (name, after) = if let Some(braced) = rest.strip_prefix('{') {
+        // `braced`: the name came from a closed `${...}`, so an empty one is a reference that expands to
+        // nothing; an unclosed `${` or a bare `$` with no name is a literal `$`.
+        let (name, after, braced) = if let Some(braced) = rest.strip_prefix('{') {
             match braced.find('}') {
-                Some(j) => (&braced[..j], &braced[j + 1..]),
-                None => {
-                    dst.push('$');
-                    ("", rest)
-                }
+                Some(j) => (&braced[..j], &braced[j + 1..], true),
+                None => ("", rest, false),
             }
         } else {
             let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(rest.len());
-            (&rest[..end], &rest[end..])
+            (&rest[..end], &rest[end..], false)
         };
         rest = after;
         if name.is_empty() {
-            dst.push('$');
+            if !braced {
+                dst.push('$');
+            }
             continue;
         }
         let m = match name.parse::<usize>() {
@@ -1663,8 +1676,11 @@ impl<'t> Iterator for SplitN<'_, 't> {
 }
 
 /// Byte-oriented regular expressions — the mirror of [`regex::bytes`], matching over `&[u8]` (which need not
-/// be valid UTF-8). Patterns compile in REAL's raw-byte mode (`\w \d \s \b` are ASCII); every other method
-/// mirrors the top-level string API. Group 0 is the whole match; spans are byte offsets.
+/// be valid UTF-8). Patterns compile in REAL's raw-byte mode, where `regex::bytes` keeps Unicode on by default:
+/// `.` and a negated class match one BYTE, not one character (`^.$` does not match `"é"`); `(?i)` folds ASCII
+/// letters only (`(?i)é` does not match `"É"`); `\w \d \s \b` are ASCII (`\w+` stops before `é`). Write the
+/// UTF-8 bytes of a character to match it. Every other method mirrors the top-level string API. Group 0 is the
+/// whole match; spans are byte offsets.
 pub mod bytes {
     use super::{
         compile_handle, real_can_extend, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
@@ -2161,7 +2177,9 @@ pub mod bytes {
                 i += 1;
                 continue;
             }
-            let (name, next) = if i < template.len() && template[i] == b'{' {
+            // A closed `${...}` with an empty name expands to nothing, as in `regex::bytes`.
+            let braced = i < template.len() && template[i] == b'{';
+            let (name, next) = if braced {
                 match template[i + 1..].iter().position(|&c| c == b'}') {
                     Some(j) => (&template[i + 1..i + 1 + j], i + 1 + j + 1),
                     None => {
@@ -2178,7 +2196,9 @@ pub mod bytes {
             };
             i = next;
             if name.is_empty() {
-                dst.push(b'$');
+                if !braced {
+                    dst.push(b'$');
+                }
                 continue;
             }
             let name_str = std::str::from_utf8(name).unwrap_or("");

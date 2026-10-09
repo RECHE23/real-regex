@@ -144,3 +144,30 @@ fn optional_group_reports_none_like_regex() {
     assert_eq!(c.get(1).unwrap().as_str(), "a");
     assert_eq!(c.get(3).unwrap().as_str(), "c");
 }
+
+/// A `start` inside a multi-byte character: the `regex` crate searches as if from the next character
+/// boundary, and so must the `_at` queries here, whose spans would otherwise split a character and
+/// panic when read.
+#[test]
+fn at_queries_from_inside_a_character_match_the_crate() {
+    let texts = ["éa", "a中x", "x😀y", "éé", "aé"];
+    let patterns = [r"\b|x*", "a", r"\w*", "", r"(\w)?", r"\B"];
+    for p in patterns {
+        let ours = Regex::new(p).unwrap();
+        let theirs = regex::Regex::new(p).unwrap();
+        for t in texts {
+            for start in 0..=t.len() {
+                let a = ours.find_at(t, start).map(|m| (m.start(), m.end(), m.as_str().to_owned()));
+                let b = theirs.find_at(t, start).map(|m| (m.start(), m.end(), m.as_str().to_owned()));
+                assert_eq!(a, b, "find_at({p:?}, {t:?}, {start})");
+                assert_eq!(ours.is_match_at(t, start), theirs.is_match_at(t, start), "is_match_at({p:?}, {t:?}, {start})");
+                let ca: Option<Vec<Option<String>>> =
+                    ours.captures_at(t, start).map(|c| (0..c.len()).map(|g| c.get(g).map(|m| m.as_str().to_owned())).collect());
+                let cb: Option<Vec<Option<String>>> =
+                    theirs.captures_at(t, start).map(|c| (0..c.len()).map(|g| c.get(g).map(|m| m.as_str().to_owned())).collect());
+                assert_eq!(ca, cb, "captures_at({p:?}, {t:?}, {start})");
+            }
+        }
+    }
+}
+
