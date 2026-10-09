@@ -113,7 +113,7 @@ TEST(left_context_bounds_what_a_match_reads_before_its_start)
   const std::string_view alphabet[] {"@", "a", "b", "1", "é", "\n", "\r", "x", "y", "w", " "};
   std::size_t            compared   {0};
   std::size_t            narrowed   {0};
-  std::uint32_t          seed       {0x2F6Bu};
+  std::uint32_t          seed       {0x2F6BU};
   for (const std::string_view source : patterns) {
     const real::regex re   {source};
     const std::size_t left {re.left_context()};
