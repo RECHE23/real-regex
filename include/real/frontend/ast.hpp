@@ -1299,20 +1299,6 @@ namespace real::detail {
     }
 
     /*!
-     * \brief Consumes \p ch or fails.
-     * \param[in] ch      The required character.
-     * \param[in] message Error message if \p ch is not present.
-     * \throws real::regex_error when the next character is not \p ch.
-     */
-    constexpr void expect(char        ch,
-                          const char* message)
-    {
-      if (!accept(ch)) {
-        fail(message);
-      }
-    }
-
-    /*!
      * \brief Maps a flag letter to its \ref flags value.
      * \param[in] letter One of 'i', 'm', 's', 'x', 'a', 'U'.
      * \return The flag; \ref flags::none for any unrecognized letter.

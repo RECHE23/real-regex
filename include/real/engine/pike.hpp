@@ -5797,9 +5797,6 @@ namespace real::detail {
           if (start >= text.size() || text.size() - start < alternation_sample_min) {
             return std::nullopt; // a short rest: left to the automaton's gate, and a longer rest may still sample
           }
-          if (state_.alt_pairs == nullptr) {
-            state_.alt_pairs = alternation_pairs_ready();
-          }
           density.decided = true;
           density.dense   = state_.alt_pairs != nullptr && state_.alt_pairs->count != 0U
                             && state_.alt_pairs->nibbles
@@ -7278,34 +7275,6 @@ namespace real::detail {
         return true;
       }
       return pos < text.size() && hints.first_bytes.test(static_cast<std::uint8_t>(text[pos]));
-    }
-
-    /*!
-     * \brief Word-ness of the code point **ending exactly at** \p pos — the left side of a `\b`/`\B`/
-     *        `\<`/`\>` boundary. False at the text start. In text mode it back-decodes (up to three
-     *        continuation bytes) and requires the sequence to end exactly at \p pos, so a malformed or
-     *        misaligned run reads as non-word; bytes / `re.A` stay byte-level.
-     * \param[in] pos        Boundary position.
-     * \param[in] ascii_word Restrict word-ness to ASCII (`re.A` / bytes mode).
-     * \return `true` when the preceding code point is a word character.
-     */
-    [[nodiscard]] constexpr bool word_before(std::size_t pos,
-                                             bool        ascii_word) const
-    {
-      return real::detail::word_before(text_, pos, ascii_word); // shared free function (assert_eval.hpp)
-    }
-
-    /*!
-     * \brief Word-ness of the code point **starting at** \p pos — the right side of a boundary. False
-     *        at the text end or on a malformed sequence; bytes / `re.A` stay byte-level.
-     * \param[in] pos        Boundary position.
-     * \param[in] ascii_word Restrict word-ness to ASCII (`re.A` / bytes mode).
-     * \return `true` when the following code point is a word character.
-     */
-    [[nodiscard]] constexpr bool word_after(std::size_t pos,
-                                            bool        ascii_word) const
-    {
-      return real::detail::word_after(text_, pos, ascii_word); // shared free function (assert_eval.hpp)
     }
 
     /*!
