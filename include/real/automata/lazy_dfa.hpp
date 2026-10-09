@@ -237,9 +237,8 @@ namespace real::detail {
   /*!
    * \brief Test observability: the AC density gate's most recent verdict.
    *
-   * Both routes give identical spans, so a test asserts this decision, never a speed-up: the margin is
-   * ~5.9x optimised but 1.4x under ASan/UBSan (sanitizer cost is per operation, diluting a byte-skipping
-   * route). Timing belongs in `benchmarks/ac_regime.cpp`. Atomic and relaxed as
+   * Both routes give identical spans, so a test asserts this decision, never a speed-up: the margin
+   * shrinks under ASan/UBSan (sanitizer cost is per operation, diluting a byte-skipping route). Timing belongs in `benchmarks/ac_regime.cpp`. Atomic and relaxed as
    * \ref il_density_last_abandoned.
    *
    * \return Reference to the process-wide verdict; assign \ref ac_verdict::not_consulted to arm it.
@@ -275,7 +274,7 @@ namespace real::detail {
     /*!
      * \brief Outgoing edges: a byte range paired with its target, `-1` meaning accept. Pairwise disjoint.
      *
-     * \note One heap block per node, ~98 % of build_byte_program's allocations (a cold first search's
+     * \note One heap block per node, most of build_byte_program's allocations (a cold first search's
      *       cost). A pool needs a stack-disciplined arena for the recursive builder; an ASCII-first
      *       expansion would remove the work instead (see \ref build_byte_program).
      */
@@ -892,7 +891,7 @@ namespace real::detail {
     std::vector<std::int32_t> map(n + 1, 0);                     // old pc -> new pc (n = the one-past end)
     // One trie per class, pointed to per pc: `(\w+)X(\w+)` builds `\w` once. `by_class` never grows, so the
     // pointers cannot dangle. Do not share it across the Tier-A and Tier-B expansions: keeping wide tries
-    // alive across both builds measured dearer than rebuilding them.
+    // alive across both builds costs more than rebuilding them.
     std::vector<utf8_trie>        by_class(prog.cp_classes.size());
     std::vector<bool>             class_built(prog.cp_classes.size(), false);
     std::vector<const utf8_trie*> tries(n, nullptr);              // the trie for each klass_cp pc
@@ -2034,8 +2033,7 @@ namespace real::detail {
       if (pc < 0 || static_cast<std::size_t>(pc) >= code_.size()) {
         return;
       }
-      // The work stack is a mutable member, empty in and out: as a local it was one heap block per call,
-      // 10 408 allocations in one 8 KB first search.
+      // The work stack is a mutable member, empty in and out: as a local it would be one heap block per call.
       stack_.assign(1, pc);
       while (!stack_.empty()) {
         const std::int32_t cur {stack_.back()};
@@ -2551,10 +2549,8 @@ namespace real::detail {
     std::array<std::uint32_t, 8>  starts_      {};      //!< Context -> start state, per \ref flush (look programs).
     std::uint32_t                 start_state_ {0};     //!< Id of the closure of pc 0, re-interned by each \ref flush.
 
-    // One heap block per DFA state. A first search's cold cost is build_byte_program's UTF-8 tries (~96 % of
+    // One heap block per DFA state. A first search's cold cost is build_byte_program's UTF-8 tries (most of
     // its allocations, benchmarks/alloc_cold_probe.cpp), paid once per regex; warm searches allocate nothing.
-    // Hoisting the miss-path scratch into members saved ~1 % of cold allocations, under the ±3 % layout
-    // floor; reserving the outer vector or flattening it into one pool changed nothing.
     mutable std::vector<std::int32_t>                                          stack_;        //!< close_into's work stack, hoisted: it ran once per pc of the source state.
     std::vector<std::vector<std::int32_t>>                                     state_pcs_;    //!< state id -> ordered pc-set.
     std::vector<std::uint32_t>                                                 trans_;        //!< [state + accept_col] accept word, [state + cut_col] memoized cut, [state + trans_col + class] next, unseeded (post-match).
@@ -2625,8 +2621,8 @@ namespace real::detail {
         }
       }
       // Transpose: rev_eps_[x] = the pcs with an epsilon edge to x; rev_consume_[x] = the consuming pcs whose
-      // successor is x. Two passes into four flat buffers: a vector per pc was a first search's largest
-      // allocation count (7003 blocks for `\w+@\w+` over 8 KB).
+      // successor is x. Two passes into four flat buffers: a vector per pc would be a first search's
+      // largest allocation count.
       const std::size_t n {code.size()};
       rev_eps_at_.assign(n + 2, 0);
       rev_consume_at_.assign(n + 2, 0);

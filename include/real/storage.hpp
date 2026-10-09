@@ -993,7 +993,7 @@ namespace real {
                                               // SBO, keeping `std::vector`'s destructor out of the
                                               // state every standalone `search()` builds. Small on
                                               // purpose: a wider state costs gcc/x86 its class-scan
-                                              // codegen, and 16 lost more on per-call rows than it won.
+                                              // codegen, and per-call rows more than it saves.
                                               small_vec<std::uint64_t, 8>>,
                             small_vec<eps_entry, 32>>
       {
@@ -1278,8 +1278,7 @@ namespace real {
 
       // Placed BEFORE every member that reads `survey`: the failing assertion ends this
       // instantiation, so the twenty-odd dependent members below never each report their own
-      // "must be initialized by a constant expression" (measured: 358 diagnostic lines for one
-      // backreference, the reason buried at line 39, against 22 with this assertion in front).
+      // "must be initialized by a constant expression", which would bury the reason in a long diagnostic.
       static_assert(viable,
                     "real::static_regex: this pattern cannot be compiled at compile time -- a "
                     "backreference, a POSIX class, or a lookaround (static_regex has no constexpr "
@@ -1326,7 +1325,7 @@ namespace real {
 
       //! \brief Flat byte-class membership tables, built at compile time: `class_tables[i*256 + b]`.
       //!        Reads \ref classes rather than calling \ref build again, which would pass clang's constexpr
-      //!        step budget. A pack-expansion form (N writes, not 2N) measured the same time and budget.
+      //!        step budget.
       static constexpr std::array < std::uint8_t, (class_count == 0 ? 1 : class_count) * 256 > class_tables {[] {
                                                                                                                std::array < std::uint8_t, (class_count == 0 ? 1 : class_count) * 256 > t {};
                                                                                                                for (std::size_t i = 0; i < class_count; ++i) {
@@ -1396,8 +1395,8 @@ namespace real {
       /*!
        * \brief Returns a non-owning view of the compile-time program, by reference.
        *
-       * Every field is a compile-time constant, so a reference costs nothing where a by-value return copied
-       * the view per `search()`: 93 of the ~325 instructions of one `[a-z]+` search, against 17 for the scan.
+       * Every field is a compile-time constant, so a reference costs nothing where a by-value return would
+       * copy the view per `search()`, a large share of a short search.
        *
        * \return A reference to the single compile-time view; it outlives every caller.
        */

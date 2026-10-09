@@ -1173,8 +1173,8 @@ namespace real::detail {
   //! \brief Subject bytes a regex lets the inner-literal route decline under its floor before it builds what the
   //!        route needs: the cold floor's least amortization. Short subjects that add up to it have paid for the
   //!        build as one long subject would, and the build lifts both floors for good. Without it a regex only
-  //!        ever searched on short subjects stayed on the bounded backtracker (`(\w+)=(\w+)` over a 95-byte
-  //!        line: 20 000 instructions a search, 1 000 once built, the build repaid within ~300 searches).
+  //!        ever searched on short subjects stays on the bounded backtracker, many times dearer per search
+  //!        than the built route.
   inline constexpr std::size_t il_short_scan_budget {64UL * 1024};
 
   //! \brief Anchored matches a regex runs before it builds its one-pass table for them. Rent before buying: the

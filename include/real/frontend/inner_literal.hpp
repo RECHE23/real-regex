@@ -72,7 +72,7 @@ namespace real::detail {
   //!
   //! Past an optional the confirm is the full engine once per candidate, so the literal's density decides
   //! whether the route pays. A single byte clears the bound at a frequency of 200 or less (`,` `.` `:` `=`
-  //! `@`); a space (1500) or an `e` (1000) does not (`\w+ \w*`, 200 KB log, arm64: 763 -> 1026 us with the route).
+  //! `@`); a space (1500) or an `e` (1000) does not.
   inline constexpr std::uint32_t optional_literal_min_score {1800};
 
   inline constexpr std::size_t inner_literal_max            {16}; //!< The most bytes an inner literal keeps; past this a longer needle costs storage without shrinking the candidate set much.
@@ -307,7 +307,7 @@ namespace real::detail {
             // Pure-literal alt (`info|error|warn`): a representable reverse-prefix segment, so flush (no
             // branch's bytes are shared) and continue. Each branch needs AT LEAST ONE byte: an empty branch
             // (`(ab|)`) makes the alt nullable, the prefix confirms at width 0 and misses the leftmost match
-            // (`(ab|)bb` over "abbbbbbbbbbbb" answered [1,3] where the VM answers [0,4]).
+            // (`(ab|)bb` over "abbbbbbbbbbbb" would answer [1,3] where the VM answers [0,4]).
             for (std::int32_t b = n.child; b >= 0; b = tree.nodes[static_cast<std::size_t>(b)].next) {
               if (!is_pure_byte_run(tree, b) || byte_run_is_empty(tree, b)) {
                 return false;
@@ -622,7 +622,7 @@ namespace real::detail {
       }
       // The scan confirms each occurrence from the LEFTMOST start its prefix reaches, so an occurrence inside
       // an earlier match's prefix text can confirm at a later start through a shorter prefix match
-      // (`(xab|a)bb` over "xabbb" answered [1,4), not [0,5)). That needs a rigid prefix (width shrinking in
+      // (`(xab|a)bb` over "xabbb" would answer [1,4), not [0,5)). That needs a rigid prefix (width shrinking in
       // fixed steps; a class loop reaches every start) and a literal that can occur in the prefix's text.
       if (st.best_top >= 1) {
         std::array<bool, 256> bytes {};

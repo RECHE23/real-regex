@@ -103,7 +103,7 @@ namespace real::detail {
       }
     }
     // Walk the sorted fold table per range (seek, then forward), never the whole table per class:
-    // O(table x ranges) made one icase `\w` cost six figures of comparisons, times each `{k}` copy.
+    // O(table x ranges) per class is quadratic on an icase `\w`, times each `{k}` copy.
     // Overlapping ranges may revisit an entry; the duplicate {p, p} is merged below.
     for (const code_range& r : in.ranges) {
       for (std::size_t i {find_fold_lower_bound(r.lo)}; i < unicode_fold_table_size; ++i) {
@@ -673,7 +673,7 @@ namespace real::detail {
     {
       // The one gate every code-point class passes: a producer that skips coalesce_ranges fails loudly. A
       // throw, not an assert, so it fires in release and stops an unordered `static_regex`. New classes
-      // only: checking every call added 36% to `(?i:\w{256})\w{256}` against the compile-scaling bound.
+      // only: checking every call charges compile time against the compile-scaling bound.
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
@@ -940,11 +940,11 @@ namespace real::detail {
 
       // A bounded repeat emits its one class node per repetition (`\w{500}` folds 500 times), so the
       // fold is cached: four direct-mapped ways in a fixed array. Keep it unallocated: a vector sized by
-      // the class table cost patterns that fold once up to 19 %. Keyed by (class, mode, negated): a
+      // the class table charges patterns that fold once. Keyed by (class, mode, negated): a
       // scoped `(?i:...)` can fold one class two ways.
       if (mode != 0 && !std::is_constant_evaluated()) {
         // Cache the finished class, negation included: caching only the fold leaves finish_class's
-        // coalesce_ranges sort per repetition (icase `[a-z]` cost 24x its plain marginal).
+        // coalesce_ranges sort per repetition.
         const auto        key {static_cast<std::int32_t>((klass_idx * 6U) + (mode * 2U) + (node.negated ? 1U : 0U))};
         const std::size_t way {static_cast<std::size_t>(key) % fold_cache_ways};
         if (fold_key_[way] == key) {

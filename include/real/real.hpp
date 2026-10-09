@@ -472,8 +472,8 @@ namespace real {
      * \param[in] sem        The walk's match semantics.
      * \param[in] text_bytes Subject length; the lazy-DFA filler needs a minimum runway.
      */
-    // Keep noinline and cold: `count_matches` inlines the constructor, and inline this logic made every
-    // dispatch change tax per-match rows whose code never moved (one added route: `single [a-z]` +10.7 %).
+    // Keep noinline and cold: `count_matches` inlines the constructor, and inlined, this logic makes every
+    // dispatch change charge per-match rows whose code never moved.
     REAL_COLD
     constexpr void decide_batching(detail::program_view prog,
                                    match_semantics      sem,
@@ -530,7 +530,7 @@ namespace real {
       // filler has only the anchored-from-candidate sub-scan (`first_bytes_valid`); the span path applies no
       // `forbid_empty_until_` (not nullable); `run()` consults the Aho-Corasick floor per search; a trailing
       // lookaround lives on `advance`'s per-match path (`make route-surface-parity`). `lazy_dfa_is_the_route`,
-      // not a residue test: that sent plain literals here and lost memmem. A faster filler's shape stays its own.
+      // not a residue test, which would send plain literals here, off memmem. A faster filler's shape stays its own.
       // A compile-time storage has no per-regex immutables, hence no shared DFAs: its filler could only ever
       // answer partial and leave every match to `run()` after a wasted refill.
       batch_lazy_dfa_  = plain && !Storage::is_compile_time && !detail::lazy_dfa_route_disabled() && h.first_bytes_valid
@@ -678,8 +678,8 @@ namespace real {
 
     //! \brief Buffered spans for the batched routes — see \ref batch_eligible_.
     //!
-    //! Tuned: a wider buffer gains nothing more and charges walks that never batch, since this array is part
-    //! of every iterator (outlining the refill does not recover it).
+    //! Not wider: this array is part of every iterator, so a wider buffer charges walks that never batch
+    //! (outlining the refill does not recover it).
     static constexpr std::size_t                                          batch_cap         {4};
     typename detail::pike_vm<typename Storage::state_type, true>::cp_span batch_[batch_cap] {}; //!< The buffered spans; indices \ref batch_i_ .. \ref batch_n_ are the unread ones.
     std::size_t                                                           batch_n_          {}; //!< Spans currently buffered.
@@ -691,9 +691,8 @@ namespace real {
      *        than by specialization, so \ref basic_regex::find_iter, whose return type fixes the
      *        specialization, reaches it too.
      *
-     * Costs one test per match on `advance`'s general path (14x won on `find_iter`, ~17 % lost on unbatched
-     * `exact_literal`). An enum shared with `batch_eligible_` costs more: only a walk selected without a
-     * per-match test removes it.
+     * Costs one test per match on `advance`'s general path, which the unbatched routes pay. An enum shared
+     * with `batch_eligible_` costs more: only a walk selected without a per-match test removes it.
      */
     bool                                                                  trailing_la_walk_ {};
     bool                                                                  batch_bytes_      {}; //!< Batch the BYTE-class route rather than the code-point one.
@@ -727,8 +726,8 @@ namespace real {
      * Each branch bills \ref real::detail::prof::tick_route under the unbatched route's identifier, once per
      * refill: `entries / matches` reads `1 / batch_cap` while batching works.
      *
-     * \warning Read docs/MEASUREMENT.md §3.2 before adding a branch here: one more branch, every filler
-     *          byte-identical, moved 17 of 18 rows' medians positive.
+     * \warning Read docs/MEASUREMENT.md §3.2 before adding a branch here: one more branch moves unrelated
+     *          rows even with every filler byte-identical.
      * \return `true` if at least one span was buffered.
      */
     REAL_NOINLINE
@@ -813,7 +812,7 @@ namespace real {
         batch_n_ = bvm.fill_inner_literal_spans(text_, pos_, batch_, batch_cap, batch_partial_, disarm);
         if (disarm) {
           // The route's abandon is sticky per haystack: further refills would repeat the wasted memmem, so
-          // the walk stops batching (staying armed cost `date dense` +10 %).
+          // the walk stops batching.
           batch_inner_lit_ = false;
           batch_eligible_  = false;
         }
@@ -839,9 +838,9 @@ namespace real {
     /*!
      * \brief Finds the next match, applying the empty-match advance rules.
      *
-     * \note Not force-inlined, by measurement: about half its cost is the per-match frame, but
-     *       `always_inline` pushes the unit past `--param inline-unit-growth` and regresses the target and
-     *       unrelated class rows on one ISA (docs/design.dox 10.1). Shrink the frame instead.
+     * \note Not force-inlined, though its per-match frame is a large share of its cost: `always_inline`
+     *       pushes the unit past `--param inline-unit-growth` and charges unrelated class rows
+     *       (docs/design.dox 10.1). Shrink the frame instead.
      */
     constexpr void advance()
     {
@@ -853,7 +852,7 @@ namespace real {
       // the engine only once the buffer drains.
       if (batch_eligible_) {
         // The partial test sits inside the exhausted branch: as a second sequential test on the per-match
-        // path it moved 17 of 21 unrelated medians positive (p = 0.007, docs/MEASUREMENT.md §3.2).
+        // path it charges unrelated rows (docs/MEASUREMENT.md §3.2).
         if (batch_i_ == batch_n_ && !refill_batch()) {
           // With `batch_partial_` the filler stopped with matches possibly ahead: the per-match path below
           // re-enters `run()`'s full gate, where ending the walk would drop them.
@@ -1928,8 +1927,8 @@ namespace real {
      * (\ref detail::capture_free_walk_structural), since a skippable `save 0` gives a wrong answer.
      * `slot_count` stays as is: the batched routes arm on `slot_count == 2`, so lowering it would reroute.
      * The range sets the flag, keeping one `program_view` copy. Outlined, so `count_matches` carries no
-     * branch for it: one there charged byte-identical rows up to 10.7 %. `noinline`, not `cold`: this is
-     * the ordinary path.
+     * branch for it: one there charges byte-identical rows. `noinline`, not `cold`: this is the ordinary
+     * path.
      *
      * \param[in] text   The subject.
      * \param[in] pos    Where the walk starts.
@@ -1945,7 +1944,7 @@ namespace real {
       const std::size_t end {endpos < text.size() ? endpos : text.size()};
       // Not a range-for: its `end()` builds a sentinel with a full `state_type` only to compare against, a
       // large share of a short call. find_iter keeps paying it: a lazy state (`std::optional`, a
-      // `construct_at` union) cost the working iterator ~26 %, and a distinct sentinel type would break the C
+      // `construct_at` union) charges the working iterator, and a distinct sentinel type would break the C
       // binding's `real_iter` and the homogeneous `std::` algorithms.
       basic_match_range<Storage> range {program_.view(), pattern(), text.substr(0, end),
                                         pos,            match_semantics::first, true};
@@ -1955,9 +1954,8 @@ namespace real {
     /*!
      * \brief \ref count_matches over the trailing-lookaround walk, outlined.
      *
-     * Outlined and cold, like \ref basic_match_iterator::decide_batching. Inline, a second walk inside
-     * `count_matches` left it on a codegen cliff where one unrelated branch charged byte-identical rows up
-     * to 10.7 %.
+     * Outlined and cold, like \ref basic_match_iterator::decide_batching, since inline, a second walk inside
+     * `count_matches` makes one unrelated branch charge byte-identical rows.
      *
      * \param[in] region The already-clamped subject.
      * \param[in] pos    Where the walk starts.
@@ -2150,8 +2148,8 @@ namespace real {
       detail::pike_vm<typename Storage::state_type, true> vm(prog, state);
       const bool                                          matched {detail::run_attempt(vm, prog, text.substr(0, end), pos, mode, out.engine_slots(), sem)};
       // One return statement: the result is NRVO-constructed in the caller and filled in place, sparing a
-      // block move whose fixed startup is the whole cost on a groupless pattern. A small-count loop in
-      // `transfer_range` instead regressed a dozen rows (it also serves the thread lists' hot path).
+      // block move whose fixed startup is the whole cost on a groupless pattern. Not a small-count loop in
+      // `transfer_range` instead: that also serves the thread lists' hot path.
       out.engine_set_matched(matched);
       return out;
     }
