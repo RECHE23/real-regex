@@ -2,6 +2,21 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.8
+
+10.8 (**bindings that keep what they borrow, and read their arguments as their models do**): **THE TABLES ARE
+NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.5` + tree `3c72c9d6`.** No engine header changed since 10.7; the
+train is the Go, C ABI, Python and Rust bindings.
+- **§A / §E / §Unicode**: the C++ engine is byte-identical to 10.7's, so nothing there can move.
+- **§B**, `bench.py` median of three on arm64 (2026-10-09) against the stamped table: every ratio within 4.4 %
+  but the known-unstable `sub · dates with refs` (92.37× / 45.79× / 53.65× across the three runs). The one
+  change on that path, a Python `Match` that is cycle-collected only when its subject or pattern is not an
+  exact `str` or `bytes` (f884b49), measured +1.3 to 1.5 % on a `finditer` step and a short `search` against a
+  layout-null build, where collecting every `Match` had cost +30 % and +11 %.
+- **Not in a table**: every fix of the train is a correctness fix; each is measured or pinned in its commit and
+  in `docs/release-notes/v2026.10.8.md`.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.7
 
 10.7 (**Unicode lookarounds tested directly, a lighter lazy-DFA miss**): **THE TABLES ARE NOT RE-RUN, AND THE
