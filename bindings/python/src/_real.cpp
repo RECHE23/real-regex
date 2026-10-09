@@ -45,6 +45,9 @@ namespace {
 PyObject* error_type = nullptr;    // real.error
 PyObject* pattern_type = nullptr;  // real.Pattern
 PyObject* match_type = nullptr;    // real.Match
+// real.Match again, as a cycle-collected subtype: the Match of a subject or pattern that is not an
+// exact str or bytes, which is the only Match a cycle can pass through (see may_cycle).
+PyObject* cyclic_match_type = nullptr;
 PyObject* match_iterator_type = nullptr;  // real.MatchIterator (internal: created, not exposed)
 PyObject* regex_set_type = nullptr;  // real._RegexSet (internal: wrapped by real.RegexSet)
 
@@ -101,6 +104,7 @@ struct PatternObject {
     real::regex* rx;
     unsigned long py_flags;
     int is_bytes;
+    bool cyclic;  // pattern_obj is not an exact str or bytes, so its Matches may sit on a cycle
     // sub's last template, parsed: keyed by the repl object itself (held, so its identity is not reused) and only
     // an exact str or bytes (immutable); shared so a scan that released the GIL keeps its segments when another
     // thread replaces them. Reparsing per call cost a rich template ~220 ns over a ~300 ns sub.
@@ -162,27 +166,66 @@ Py_ssize_t* char_spans(MatchObject* match) { return byte_spans(match) + match->n
 PatternObject* as_pattern(PyObject* obj) { return reinterpret_cast<PatternObject*>(obj); }
 MatchObject* as_match(PyObject* obj) { return reinterpret_cast<MatchObject*>(obj); }
 
+// Pattern and MatchIterator are cycle-collected, as re's are: each holds an object the caller
+// chose, and a str subclass as pattern or subject can hold what was made from it. A Match is, too,
+// only when it can sit on a cycle -- see cyclic_match_type: an exact str or bytes refers to nothing,
+// and a Pattern's other references are built here and never handed out. A cycle-collected Match
+// cost a finditer step 5 ns in allocation alone, tracked or not. None defines tp_clear: their
+// references never change after construction, so, as for a tuple, the user object on any such
+// cycle is the one the collector clears.
+bool may_cycle(PyObject* held) { return PyUnicode_CheckExact(held) == 0 && PyBytes_CheckExact(held) == 0; }
+
 void Pattern_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     PatternObject* pattern = as_pattern(self);
+    PyObject_GC_UnTrack(self);
     delete pattern->rx;
     delete pattern->repl_segments;
     Py_XDECREF(pattern->repl_key);
     Py_XDECREF(pattern->group_names);
     Py_XDECREF(pattern->group_index);
     Py_XDECREF(pattern->pattern_obj);
-    PyObject_Free(self);
+    PyObject_GC_Del(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
+
+int Pattern_traverse(PyObject* self, visitproc visit, void* arg) {
+    PatternObject* pattern = as_pattern(self);
+    Py_VISIT(Py_TYPE(self));
+    Py_VISIT(pattern->pattern_obj);
+    Py_VISIT(pattern->repl_key);
+    Py_VISIT(pattern->group_names);
+    Py_VISIT(pattern->group_index);
+    return 0;
+}
+
+void Match_release(MatchObject* match) {
+    cursor_decref(match->cursor);
+    Py_XDECREF(match->subject);
+    Py_XDECREF(match->pattern);
 }
 
 void Match_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
-    MatchObject* match = as_match(self);
-    cursor_decref(match->cursor);
-    Py_XDECREF(match->subject);
-    Py_XDECREF(match->pattern);
+    Match_release(as_match(self));
     PyObject_Free(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
+
+void CyclicMatch_dealloc(PyObject* self) {
+    PyTypeObject* tp = Py_TYPE(self);
+    PyObject_GC_UnTrack(self);
+    Match_release(as_match(self));
+    PyObject_GC_Del(self);
+    Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
+
+int Match_traverse(PyObject* self, visitproc visit, void* arg) {
+    MatchObject* match = as_match(self);
+    Py_VISIT(Py_TYPE(self));
+    Py_VISIT(match->subject);
+    Py_VISIT(match->pattern);
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +270,7 @@ struct MatchIteratorObject {
 void MatchIterator_dealloc(PyObject* self) {
     PyTypeObject* tp = Py_TYPE(self);
     auto* it = reinterpret_cast<MatchIteratorObject*>(self);
+    PyObject_GC_UnTrack(self);
     delete it->cur;  // delete the cursor BEFORE releasing the bytes and refs it borrows from
     if (it->buf_owned) {
         PyBuffer_Release(&it->buf);
@@ -234,8 +278,19 @@ void MatchIterator_dealloc(PyObject* self) {
     cursor_decref(it->chars);
     Py_XDECREF(it->subject);
     Py_XDECREF(it->pattern);
-    PyObject_Free(self);
+    PyObject_GC_Del(self);
     Py_DECREF(reinterpret_cast<PyObject*>(tp));
+}
+
+int MatchIterator_traverse(PyObject* self, visitproc visit, void* arg) {
+    auto* it = reinterpret_cast<MatchIteratorObject*>(self);
+    Py_VISIT(Py_TYPE(self));
+    Py_VISIT(it->subject);
+    Py_VISIT(it->pattern);
+    if (it->buf_owned) {
+        Py_VISIT(it->buf.obj);  // the export holds its own reference to the exporter
+    }
+    return 0;
 }
 
 // Holds a subject's bytes for as long as the caller needs them. `str` and `bytes` need nothing
@@ -466,10 +521,18 @@ PyObject* empty_like(PatternObject* pat) {
 // message. The int-returning call sites ignore the nullptr and return their own -1.
 PyObject* set_cpp_error() { return sciforge::binding::set_cpp_error(error_type); }
 
+// The cycle-collected Match, kept out of make_match: allocating one costs more than the rest of the
+// Match, and only a subject or pattern that is not an exact str or bytes takes it.
+REAL_COLD MatchObject* new_cyclic_match(Py_ssize_t nitems) {
+    return PyObject_GC_NewVar(MatchObject, reinterpret_cast<PyTypeObject*>(cyclic_match_type), nitems);
+}
+
 PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
                      Py_ssize_t pos, Py_ssize_t endpos, char_cursor* cursor = nullptr) {
     const auto nslots = static_cast<Py_ssize_t>(2 * match.size());
-    auto*      obj    = PyObject_NewVar(MatchObject, reinterpret_cast<PyTypeObject*>(match_type), 2 * nslots);
+    const bool cyclic = pat->cyclic || may_cycle(subject);
+    auto*      obj    = cyclic ? new_cyclic_match(2 * nslots)
+                               : PyObject_NewVar(MatchObject, reinterpret_cast<PyTypeObject*>(match_type), 2 * nslots);
     if (obj == nullptr) {
         return nullptr;
     }
@@ -489,6 +552,9 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
         const std::size_t start = match.start(group);
         bytes[2 * group] = start == real::npos ? -1 : static_cast<Py_ssize_t>(start);
         bytes[(2 * group) + 1] = start == real::npos ? -1 : static_cast<Py_ssize_t>(match.end(group));
+    }
+    if (cyclic) {
+        PyObject_GC_Track(obj);
     }
     return reinterpret_cast<PyObject*>(obj);
 }
@@ -760,6 +826,13 @@ PyObject* Match_expand(PyObject* self, PyObject* template_arg);
 PyObject* identity_copy(PyObject* self, PyObject* unused);
 PyObject* type_class_getitem(PyObject* type, PyObject* item);
 
+// re.Match takes no subclass. real.Match is a base type only for its cycle-collected twin, which is
+// made from a spec and so never runs this hook: a class statement is refused here, in re's words.
+PyObject* Match_init_subclass(PyObject* /*cls*/, PyObject* /*args*/, PyObject* /*kwargs*/) {
+    PyErr_SetString(PyExc_TypeError, "type 'real.Match' is not an acceptable base type");
+    return nullptr;
+}
+
 PyMethodDef match_methods[] = {
     {"group", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_group)), METH_FASTCALL,
      "group($self, /, *groups)\n--\n\n"
@@ -827,6 +900,10 @@ PyMethodDef match_methods[] = {
     {"__class_getitem__", type_class_getitem, METH_O | METH_CLASS,
      "__class_getitem__($cls, item, /)\n--\n\n"
      "Return a GenericAlias, so Match[str] works like re.Match[str]."},
+    {"__init_subclass__", reinterpret_cast<PyCFunction>(reinterpret_cast<void*>(Match_init_subclass)),
+     METH_VARARGS | METH_KEYWORDS | METH_CLASS,
+     "__init_subclass__($cls, /, **kwargs)\n--\n\n"
+     "Refuse a subclass, as re.Match does."},
     {nullptr, nullptr, 0, nullptr},
 };
 
@@ -964,8 +1041,22 @@ PyType_Spec match_spec = {
     "real.Match",
     sizeof(MatchObject),
     sizeof(Py_ssize_t),  // the spans, after the object (see byte_spans)
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_BASETYPE,  // see Match_init_subclass
     match_slots,
+};
+
+PyType_Slot cyclic_match_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(CyclicMatch_dealloc)},
+    {Py_tp_traverse, reinterpret_cast<void*>(Match_traverse)},
+    {0, nullptr},
+};
+
+PyType_Spec cyclic_match_spec = {
+    "real.Match",
+    sizeof(MatchObject),
+    sizeof(Py_ssize_t),
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC,
+    cyclic_match_slots,
 };
 
 // ---------------------------------------------------------------------------
@@ -1396,6 +1487,7 @@ PyObject* MatchIterator_iternext(PyObject* self) {
 
 PyType_Slot match_iterator_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(MatchIterator_dealloc)},
+    {Py_tp_traverse, reinterpret_cast<void*>(MatchIterator_traverse)},
     {Py_tp_iter, reinterpret_cast<void*>(MatchIterator_iter)},
     {Py_tp_iternext, reinterpret_cast<void*>(MatchIterator_iternext)},
     {Py_tp_doc,
@@ -1409,7 +1501,7 @@ PyType_Spec match_iterator_spec = {
     "real.MatchIterator",
     sizeof(MatchIteratorObject),
     0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC,
     match_iterator_slots,
 };
 
@@ -1437,7 +1529,7 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* const* args, Py_ssize_t nar
     const Py_ssize_t char_len = sv.char_is_byte ? sv.len : PyUnicode_GetLength(string);
     pos = std::clamp(pos, Py_ssize_t {0}, char_len);
     endpos = std::clamp(endpos, Py_ssize_t {0}, char_len);
-    auto* it = PyObject_New(MatchIteratorObject, reinterpret_cast<PyTypeObject*>(match_iterator_type));
+    auto* it = PyObject_GC_New(MatchIteratorObject, reinterpret_cast<PyTypeObject*>(match_iterator_type));
     if (it == nullptr) {
         return nullptr;
     }
@@ -1460,6 +1552,7 @@ PyObject* Pattern_finditer(PyObject* self, PyObject* const* args, Py_ssize_t nar
         Py_DECREF(reinterpret_cast<PyObject*>(it));  // dealloc frees the refs; cur is null
         return set_cpp_error();  // bad_alloc -> MemoryError, otherwise real.error
     }
+    PyObject_GC_Track(it);
     return reinterpret_cast<PyObject*>(it);
 }
 
@@ -2519,6 +2612,7 @@ Py_hash_t Pattern_hash(PyObject* self) {
 
 PyType_Slot pattern_slots[] = {
     {Py_tp_dealloc, reinterpret_cast<void*>(Pattern_dealloc)},
+    {Py_tp_traverse, reinterpret_cast<void*>(Pattern_traverse)},
     {Py_tp_repr, reinterpret_cast<void*>(Pattern_repr)},
     {Py_tp_richcompare, reinterpret_cast<void*>(Pattern_richcompare)},
     {Py_tp_hash, reinterpret_cast<void*>(Pattern_hash)},
@@ -2535,7 +2629,7 @@ PyType_Spec pattern_spec = {
     "real.Pattern",
     sizeof(PatternObject),
     0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC,
     pattern_slots,
 };
 
@@ -2979,7 +3073,7 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
 
-    auto* obj = PyObject_New(PatternObject, reinterpret_cast<PyTypeObject*>(pattern_type));
+    auto* obj = PyObject_GC_New(PatternObject, reinterpret_cast<PyTypeObject*>(pattern_type));
     if (obj == nullptr) {
         delete rx;
         return nullptr;
@@ -2992,6 +3086,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     obj->repl_segments = nullptr;
     obj->group_names = nullptr;
     obj->group_index = nullptr;
+    obj->cyclic = may_cycle(pattern);
+    PyObject_GC_Track(obj);
     return reinterpret_cast<PyObject*>(obj);
 }
 
@@ -3050,9 +3146,10 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
     Py_XDECREF(re_mod);
     pattern_type = PyType_FromSpec(&pattern_spec);
     match_type = PyType_FromSpec(&match_spec);
+    cyclic_match_type = (match_type != nullptr) ? PyType_FromSpecWithBases(&cyclic_match_spec, match_type) : nullptr;
     match_iterator_type = PyType_FromSpec(&match_iterator_spec);  // internal: created, not exposed
     regex_set_type = PyType_FromSpec(&regex_set_spec);            // internal: created, not exposed
-    if (error_type == nullptr || pattern_type == nullptr || match_type == nullptr ||
+    if (error_type == nullptr || pattern_type == nullptr || match_type == nullptr || cyclic_match_type == nullptr ||
         match_iterator_type == nullptr || regex_set_type == nullptr ||
         PyModule_AddObject(module, "error", Py_NewRef(error_type)) < 0 ||
         PyModule_AddObject(module, "Pattern", Py_NewRef(pattern_type)) < 0 ||

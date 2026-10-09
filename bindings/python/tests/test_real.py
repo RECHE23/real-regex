@@ -1637,6 +1637,87 @@ class TestBindingCleanup(unittest.TestCase):
                          "a[1]b[22]")
 
 
+class TestReferenceCycles(unittest.TestCase):
+    """A Match, a finditer iterator or a Pattern held by the subject or pattern it was made from is
+    collected with it, as re's are: the binding's objects report their references to the cycle
+    collector. Only a subject or pattern that is not an exact str or bytes can close such a cycle,
+    so only those Matches are tracked; the rest stay off the collector, at no cost per match."""
+
+    class Text(str):
+        pass
+
+    class Buffer(bytearray):
+        pass
+
+    def assert_collected(self, make):
+        import gc
+        import weakref
+        holder = make()
+        ref = weakref.ref(holder)
+        del holder
+        gc.collect()
+        self.assertIsNone(ref(), "the cycle through %s was not collected" % make.__name__)
+
+    def test_each_cycle_is_collected(self):
+        def match_in_subject():
+            s = self.Text("xa")
+            s.held = real.search("a", s)
+            return s
+
+        def iterator_in_subject():
+            s = self.Text("aaa")
+            s.held = real.finditer("a", s)
+            next(s.held)
+            return s
+
+        def pattern_in_pattern():
+            s = self.Text("a+q")
+            s.held = real.compile(s)
+            real.purge()
+            return s
+
+        def match_of_pattern_in_pattern():
+            s = self.Text("a+r")
+            s.held = real.compile(s).search("xaar")
+            real.purge()
+            return s
+
+        def iterator_in_buffer():
+            b = self.Buffer(b"aa")
+            b.held = real.compile(b"a").finditer(b)
+            next(b.held)
+            return b
+
+        def match_in_buffer():
+            b = self.Buffer(b"aa")
+            b.held = real.compile(b"a").search(b)
+            return b
+
+        cases = [match_in_subject, iterator_in_subject, pattern_in_pattern,
+                 match_of_pattern_in_pattern, iterator_in_buffer, match_in_buffer]
+        for make in cases:
+            with self.subTest(case=make.__name__):
+                self.assert_collected(make)
+        self.assertEqual(len(cases), 6)  # denominator
+
+    def test_only_a_match_that_can_cycle_is_tracked(self):
+        import gc
+        self.assertFalse(gc.is_tracked(real.search("a", "xa")))
+        self.assertFalse(gc.is_tracked(real.compile(b"a").search(b"xa")))
+        cyclic = real.search("a", self.Text("xa"))
+        self.assertTrue(gc.is_tracked(cyclic))
+        self.assertIsInstance(cyclic, real.Match)
+        self.assertEqual((cyclic.span(), cyclic.group(), cyclic[0]), ((1, 2), "a", "a"))
+        self.assertEqual(repr(cyclic), "<real.Match object; span=(1, 2), match='a'>")
+
+    def test_match_takes_no_subclass(self):
+        for module in (real, re):
+            with self.subTest(module=module.__name__), self.assertRaises(TypeError) as caught:
+                type("Sub", (module.Match,), {})
+            self.assertEqual(str(caught.exception),
+                             "type '%s.Match' is not an acceptable base type" % module.__name__)
+
+
 class TestMatchRepr(unittest.TestCase):
     """Match.__repr__ mirrors re's format (only the module prefix differs)."""
 
