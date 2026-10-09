@@ -497,36 +497,40 @@ PyObject* make_match(PatternObject* pat, PyObject* subject, const auto& match,
 // Match methods
 // ---------------------------------------------------------------------------
 
-// Group argument -> group number, or -1 with an exception set.
+// Group argument -> group number, or -1 with an exception set. As re reads it: any __index__ object
+// is a number, clipped so that one out of range is "no such group" rather than OverflowError; any
+// other argument is a key looked up among the names, so an unhashable one is TypeError.
 Py_ssize_t resolve_group(MatchObject* match, PyObject* arg) {
-    PatternObject* pat = as_pattern(match->pattern);
+    PatternObject* pat   = as_pattern(match->pattern);
+    Py_ssize_t     group = -1;
     if (PyLong_Check(arg)) {
-        const Py_ssize_t group = PyLong_AsSsize_t(arg);
+        group = PyLong_AsSsize_t(arg);
         if (group == -1 && PyErr_Occurred() != nullptr) {
-            return -1;
+            PyErr_Clear();  // out of the ssize_t range, so out of the group range too
         }
-        if (group < 0 || static_cast<std::size_t>(group) > pat->rx->group_count()) {
-            PyErr_SetString(PyExc_IndexError, "no such group");
-            return -1;
+    } else if (PyIndex_Check(arg) != 0) {
+        group = PyNumber_AsSsize_t(arg, nullptr);
+        if (group == -1 && PyErr_Occurred() != nullptr) {
+            return -1;  // raised by __index__ itself
         }
-        return group;
-    }
-    if (PyUnicode_Check(arg)) {
+    } else if (PyUnicode_Check(arg)) {
         Py_ssize_t len = 0;
         const char* name = PyUnicode_AsUTF8AndSize(arg, &len);
         if (name == nullptr) {
-            return -1;
+            PyErr_Clear();  // a name with no UTF-8 form (a lone surrogate) names no group
+        } else {
+            const std::size_t found =
+                pat->rx->group_index(std::string_view(name, static_cast<std::size_t>(len)));
+            group = (found == real::npos) ? -1 : static_cast<Py_ssize_t>(found);
         }
-        const std::size_t group =
-            pat->rx->group_index(std::string_view(name, static_cast<std::size_t>(len)));
-        if (group == real::npos) {
-            PyErr_SetString(PyExc_IndexError, "no such group");
-            return -1;
-        }
-        return static_cast<Py_ssize_t>(group);
+    } else if (PyObject_Hash(arg) == -1) {
+        return -1;
     }
-    PyErr_SetString(PyExc_IndexError, "no such group");
-    return -1;
+    if (group < 0 || static_cast<std::size_t>(group) > pat->rx->group_count()) {
+        PyErr_SetString(PyExc_IndexError, "no such group");
+        return -1;
+    }
+    return group;
 }
 
 PyObject* group_value(MatchObject* match, Py_ssize_t group, PyObject* default_value) {

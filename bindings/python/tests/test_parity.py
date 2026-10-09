@@ -871,6 +871,51 @@ class TestParity(unittest.TestCase):
                 self.assertEqual(real.sub(r"(a)", template, "a"), re.sub(r"(a)", template, "a"))
         self.assertEqual(len(templates), 13)  # denominator
 
+    def test_group_argument_kinds_match_re(self):
+        """Every way of naming a group reads as re reads it: an __index__ object is a number, an
+        int out of the ssize_t range is "no such group" (not OverflowError), a name with no UTF-8
+        form names nothing, and an unhashable argument is TypeError. Five accessors each."""
+        class Index:
+            def __index__(self):
+                return 1
+
+        class Raising:
+            def __index__(self):
+                raise ValueError("from __index__")
+
+        def outcome(module, read, arg):
+            try:
+                return ("ok", read(module.search("(?P<x>a)(b)?", "a"), arg))
+            except Exception as exc:  # noqa: BLE001 - the class IS the observable
+                return (type(exc).__name__,)
+
+        readers = [lambda m, a: m.group(a), lambda m, a: m.span(a), lambda m, a: m[a],
+                   lambda m, a: m.start(a), lambda m, a: m.group(0, a)]
+        args = [Index(), True, 2, 10**30, -10**30, -1, 3, "x", "\ud800", "nope", b"x", 1.0, None,
+                [1], Raising()]
+        for arg in args:
+            for k, read in enumerate(readers):
+                with self.subTest(arg=repr(arg)[:20], reader=k):
+                    self.assertEqual(outcome(real, read, arg), outcome(re, read, arg))
+        self.assertEqual(len(args) * len(readers), 75)  # denominator
+
+    def test_compile_takes_a_pattern_compiled_by_re(self):
+        """real.compile(re.compile(...)) compiles the source again under its flags, inline flags
+        folded in, and keeps re's rule that a compiled pattern takes no further flags."""
+        for source, flags, text in [("a", 0, "xa"), ("(?i)a", 0, "xA"), (b"a", re.I, b"xA"),
+                                    (r"\w+", re.A, "é ab")]:
+            with self.subTest(source=source):
+                compiled = real.compile(re.compile(source, flags))
+                self.assertEqual(compiled.engine, "real")
+                self.assertEqual(compiled.search(text).span(), re.search(source, text, flags).span())
+                self.assertEqual(real.search(re.compile(source, flags), text).span(),
+                                 re.search(source, text, flags).span())
+        with self.assertRaises(ValueError):
+            real.compile(re.compile("a"), re.I)
+        with self.assertRaises(real.error):
+            real.compile(re.compile(r"(a)\1"), fallback=False)
+        self.assertEqual(real.compile(re.compile(r"(a)\1"), fallback=True).engine, "re")
+
     def test_template_group_name_follows_the_3_12_rule(self):
         r"""A \g<name> that is neither ASCII digits nor an identifier, or not ASCII under bytes,
         is real.error at the name on every version: docs/divergences.dox div_module_surface.

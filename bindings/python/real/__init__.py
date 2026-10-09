@@ -416,7 +416,8 @@ def compile(pattern, flags=0, fallback=None):  # noqa: A001 - mirrors re.compile
     """Compile a regular expression pattern.
 
     Mirrors ``re.compile``. If ``pattern`` is already a compiled pattern, it is
-    returned as-is and ``flags`` must be zero.
+    returned as-is and ``flags`` must be zero. A pattern compiled by ``re`` is
+    compiled again here from its ``pattern`` and ``flags``.
 
     Args:
         pattern (str, bytes, or Pattern): The regular expression to compile.
@@ -446,6 +447,10 @@ def compile(pattern, flags=0, fallback=None):  # noqa: A001 - mirrors re.compile
         if flags:
             raise ValueError("cannot process flags argument with a compiled pattern")
         return pattern
+    if isinstance(pattern, _re.Pattern):
+        if flags:
+            raise ValueError("cannot process flags argument with a compiled pattern")
+        pattern, flags = pattern.pattern, pattern.flags
     if fallback is None:
         fallback = globals()["fallback"]  # the module-level default policy (real.fallback)
     try:
