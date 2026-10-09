@@ -1996,31 +1996,19 @@ namespace real::detail {
       if (eof()) {
         fail_incomplete_escape(backslash_pos);
       }
-      const std::int32_t digit {hex_value(peek())};
-      if (digit < 0) {
-        fail_incomplete_escape(backslash_pos);
-      }
+      const char ch {peek()};
       ++pos_;
-      return digit;
-    }
-
-    /*!
-     * \brief The value of a hexadecimal digit.
-     * \param[in] ch The character.
-     * \return Its value in `[0, 15]`, or -1 when \p ch is not a hex digit.
-     */
-    static constexpr std::int32_t hex_value(char ch)
-    {
       if (ch >= '0' && ch <= '9') {
         return ch - '0';
       }
       if (ch >= 'a' && ch <= 'f') {
-        return (ch - 'a') + 10;
+        return ch - 'a' + 10;
       }
       if (ch >= 'A' && ch <= 'F') {
-        return (ch - 'A') + 10;
+        return ch - 'A' + 10;
       }
-      return -1;
+      --pos_;
+      fail_incomplete_escape(backslash_pos);
     }
 
     /*!
@@ -2049,7 +2037,19 @@ namespace real::detail {
       const int    width {capital ? 8 : 4};
       std::int32_t value {};
       for (int i = 0; i < width; ++i) {
-        const std::int32_t digit {eof() ? -1 : hex_value(peek())};
+        std::int32_t digit {-1};
+        if (!eof()) {
+          const char ch {peek()};
+          if (ch >= '0' && ch <= '9') {
+            digit = ch - '0';
+          }
+          else if (ch >= 'a' && ch <= 'f') {
+            digit = (ch - 'a') + 10;
+          }
+          else if (ch >= 'A' && ch <= 'F') {
+            digit = (ch - 'A') + 10;
+          }
+        }
         if (digit < 0) {
           fail_incomplete_escape(backslash);
         }
@@ -2078,7 +2078,17 @@ namespace real::detail {
       std::int32_t value {};
       int          count {};
       while (!eof() && count < 6) {
-        const std::int32_t digit {hex_value(peek())};
+        const char   ch    {peek()};
+        std::int32_t digit {-1};
+        if (ch >= '0' && ch <= '9') {
+          digit = ch - '0';
+        }
+        else if (ch >= 'a' && ch <= 'f') {
+          digit = (ch - 'a') + 10;
+        }
+        else if (ch >= 'A' && ch <= 'F') {
+          digit = (ch - 'A') + 10;
+        }
         if (digit < 0) {
           break;
         }
