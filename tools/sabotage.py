@@ -86,7 +86,7 @@ TEST_BINARY = (["make", "build"], "build/real_tests_bin")
 ARTIFACTS: tuple[tuple[str, tuple[tuple[list[str], str], ...]], ...] = (
     ("include/", (PY_MODULE, TEST_BINARY)),
     ("bindings/python/src/", (PY_MODULE,)),
-    ("bindings/c/", (PY_MODULE,)),
+    ("bindings/c/", (PY_MODULE, TEST_BINARY)),  # the test binary compiles the C ABI shim too
     # The compile alone -- not the enumeration, not the 3.2 M-case run. `exhaustive-compat` depends
     # on this target, so there is one compile line rather than two that can drift.
     ("fuzz/exhaustive_compat.cpp", ((["make", "-C", "fuzz", "exhaustive-compat-build"],
@@ -162,7 +162,7 @@ def self_test_artifact_map() -> int:
     """The mapping itself, in milliseconds: the right artifact per file, and no fallback."""
     for rel, wanted in (("include/real/real.hpp", [["make", "python-build"], ["make", "build"]]),
                         ("bindings/python/src/_real.cpp", [["make", "python-build"]]),
-                        ("bindings/c/real_capi.cpp", [["make", "python-build"]]),
+                        ("bindings/c/real_capi.cpp", [["make", "python-build"], ["make", "build"]]),
                         (EC_SOURCE, [["make", "-C", "fuzz", "exhaustive-compat-build"]])):
         got = artifact_for(rel)
         if got is None or [cmd for cmd, _ in got] != wanted:
