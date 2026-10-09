@@ -1034,9 +1034,7 @@ namespace real {
                                              match_semantics        sem = match_semantics::first)
     {
       // `if constexpr` because the static storage has no lookaround scratch.
-      if constexpr (requires(State & st) {
-        st.lookaround;
-      }) {
+      if constexpr (state_has_lookaround<State>) {
         if (sem == match_semantics::first && prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !trailing_la_route_disabled())) {
           prof::tick_route(prof::route::trailing_la);
@@ -1591,9 +1589,7 @@ namespace real {
     {
       const std::size_t      end    {endpos < text.size() ? endpos : text.size()};
       const std::string_view region {text.substr(0, end)};
-      if constexpr (requires(typename Storage::state_type & st) {
-        st.lookaround;
-      }) {
+      if constexpr (detail::state_has_lookaround<typename Storage::state_type>) {
         const auto& prog {program_.view()};
         if (prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {
@@ -1617,9 +1613,7 @@ namespace real {
     {
       std::vector<result_type> result;
       // Same dispatch as count_matches.
-      if constexpr (requires(typename Storage::state_type & st) {
-        st.lookaround;
-      }) {
+      if constexpr (detail::state_has_lookaround<typename Storage::state_type>) {
         const auto& prog {program_.view()};
         if (prog.hints.trailing_lookaround >= 0
             && (std::is_constant_evaluated() || !detail::trailing_la_route_disabled())) {

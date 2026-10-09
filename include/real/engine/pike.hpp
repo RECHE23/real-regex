@@ -766,6 +766,28 @@ namespace real::detail {
     }
   };
 
+  // Per-state capabilities: the dynamic storage's state carries these members, the static one does not.
+  //! Alternation pair plan.
+  template <typename S> concept state_has_alt_pairs = requires(S & s) {
+    s.alt_pairs;
+  };
+  //! Lookaround scratch.
+  template <typename S> concept state_has_lookaround = requires(S & s) {
+    s.lookaround;
+  };
+  //! Inner-literal give-way.
+  template <typename S> concept state_has_il_abandoned = requires(S & s) {
+    s.il_abandoned;
+  };
+  //! Rare-discriminator give-way.
+  template <typename S> concept state_has_rare_disc_abandoned = requires(S & s) {
+    s.rare_disc_abandoned;
+  };
+  //! Search lazy DFAs.
+  template <typename S> concept state_has_fwd_dfa = requires(S & s) {
+    s.fwd_dfa;
+  };
+
   /*!
    * \brief The Pike VM, generic over the scratch-state container policy.
    * \tparam State A \ref basic_pike_state instantiation (vector- or static-backed).
@@ -774,7 +796,6 @@ namespace real::detail {
    *         per-`run()` program-identity compare (2.9 points of a `[a-z]+` walk). Defaults to \c false:
    *         an embedder holding a state across regexes (Python binding, meta-seam harness) needs it.
    */
-
   template <typename State, bool StateBoundToProgram = false>
   class pike_vm
   {
@@ -972,9 +993,7 @@ namespace real::detail {
       // Lazy DFA: a forward DFA finds the match end (capture-free, far cheaper than a Pike scan) and a reverse
       // DFA its start; the VM then runs on [s, e] only for captures and the empty-match rule. Ineligible
       // patterns, a tripped thrash flag, small inputs and non-search modes stay on the VM.
-      if constexpr (requires(State & s) {
-        s.fwd_dfa;
-      }) {
+      if constexpr (state_has_fwd_dfa<State>) {
         // Full match: the window is exactly [start, text.size()]. A one-pass pattern fills its captures in
         // one pass (extract returns false when it cannot); no DFA build is paid.
         if (mode == run_mode::full && !std::is_constant_evaluated() && !lazy_dfa_route_disabled()) {
@@ -1143,9 +1162,7 @@ namespace real::detail {
                     std::size_t&     stop)
     {
       stop = s;
-      if constexpr (requires(State & st) {
-        st.fwd_dfa;
-      }) {
+      if constexpr (state_has_fwd_dfa<State>) {
         if (prog_.slot_count > 2 && !prog_.hints.capture_free_walk) {
           // Groups to fill on a one-pass pattern whose ends the table knows: one walk finds the end and the
           // groups, where the forward DFA would read the window first and the table read it again.
@@ -1272,9 +1289,7 @@ namespace real::detail {
     {
       // Guarded: the IL fields exist on a static state only when its tier wants IL
       // (`static_il_guard_fields`), so an unguarded body fails to compile for WantsIL = false.
-      if constexpr (requires(State & st) {
-        st.il_abandoned;
-      }) {
+      if constexpr (state_has_il_abandoned<State>) {
         if (state_.il_text != static_cast<const void*>(text.data())) {
           state_.il_abandoned      = false; // a fresh haystack: re-enable and re-evaluate its guards
           state_.il_density_cands  = 0;
@@ -1323,9 +1338,7 @@ namespace real::detail {
       inner_literal_bill bill            {};
       std::size_t        reversed        {0}; // bytes the last candidate's reverse automaton read
       const auto         give_way        {[&] {
-                                            if constexpr (requires(State & st) {
-            st.il_abandoned;
-          }) {
+                                            if constexpr (state_has_il_abandoned<State>) {
                                               state_.il_abandoned = true; // sticky for this haystack, as the density gate's
                                             }
                                             note(counter::inner_literal_bill_trips);
@@ -3286,9 +3299,7 @@ namespace real::detail {
                           OutSlots&        out_slots)
     {
       // Static storage has no lookaround scratch and never arms trailing_lookaround.
-      if constexpr (!requires(State & st) {
-        st.lookaround;
-      }) {
+      if constexpr (!state_has_lookaround<State>) {
         return fail_slots(out_slots);
       }
       else {
@@ -5566,9 +5577,7 @@ namespace real::detail {
                                                             std::size_t                        cnt) const
     {
       // A made decision is read in line: per-match searches ask again.
-      if constexpr (requires(State & st) {
-        st.alt_pairs;
-      }) {
+      if constexpr (state_has_alt_pairs<State>) {
         const alternation_density* const seen {alternation_density_seen(text)};
         if (seen != nullptr && seen->decided && !alternation_pairs_disabled()) {
           return seen->dense ? state_.alt_pairs : nullptr;
@@ -5619,9 +5628,7 @@ namespace real::detail {
                                                      std::size_t                        cnt) const
     {
 #if defined(__ARM_NEON) || defined(__SSE2__)
-      if constexpr (requires(State & st) {
-        st.alt_pairs;
-      }) {
+      if constexpr (state_has_alt_pairs<State>) {
         if (alternation_pairs_disabled()) {
           return nullptr;
         }
@@ -5674,9 +5681,7 @@ namespace real::detail {
      */
     [[nodiscard]] bool alternation_wide_may_take(std::string_view text) const
     {
-      if constexpr (requires(State & st) {
-        st.alt_pairs;
-      }) {
+      if constexpr (state_has_alt_pairs<State>) {
         const std::size_t branches {prog_.hints.alternation_branch_count};
         if (prog_.hints.small_set_size != 0 || prog_.hints.single_first >= 0
             || branches < alternation_wide_min_branches || branches > alternation_wide_max_branches) {
@@ -5742,9 +5747,7 @@ namespace real::detail {
                                              std::size_t*     filled = nullptr)
     {
 #if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
-      if constexpr (requires(State & st) {
-        st.alt_pairs;
-      }) {
+      if constexpr (state_has_alt_pairs<State>) {
         if (!prog_.hints.first_bytes_valid || alternation_pairs_disabled() || alternation_nibbles_disabled()) {
           return std::nullopt;
         }
@@ -5906,9 +5909,7 @@ namespace real::detail {
                                           std::size_t      start)
     {
 #if (defined(__ARM_NEON) || defined(__SSE2__)) && (defined(__aarch64__) || defined(__SSSE3__) || (defined(__SSE2__) && (defined(__GNUC__) || defined(__clang__))))
-      if constexpr (requires(State & st) {
-        st.alt_pairs;
-      }) {
+      if constexpr (state_has_alt_pairs<State>) {
         const pattern_hints& h {prog_.hints};
         if (h.fixed_alternation || h.anchored_start || h.rare_disc >= 0 || h.prefix_size >= 2 || h.rare_byte >= 0
             || h.single_first >= 0 || h.line_anchored != 0U || !h.first_bytes_valid || alternation_pairs_disabled()
@@ -6825,9 +6826,7 @@ namespace real::detail {
       partial = true;
       // Same guard as il_reset_on_new_haystack: a static tier without IL has no `il_abandoned`. Never
       // armed there (no prefix_code), so this branch only keeps the template well-formed.
-      if constexpr (!requires(State & st) {
-        st.il_abandoned;
-      }) {
+      if constexpr (!state_has_il_abandoned<State>) {
         static_cast<void>(text);
         static_cast<void>(start);
         static_cast<void>(out);
@@ -7142,9 +7141,7 @@ namespace real::detail {
       // density abandon per haystack: dense `:` makes memchr+verify lose to the prefix.
       if (!std::is_constant_evaluated() && hints.rare_disc >= 0 && !rare_disc_route_disabled()) {
         bool use_disc {true};
-        if constexpr (requires(State & s) {
-          s.rare_disc_abandoned;
-        }) {
+        if constexpr (state_has_rare_disc_abandoned<State>) {
           if (state_.rare_disc_text != static_cast<const void*>(text.data())) {
             state_.rare_disc_abandoned = false;
             state_.rare_disc_text      = static_cast<const void*>(text.data());
@@ -7155,9 +7152,7 @@ namespace real::detail {
           bool              density_abandon {false};
           const std::size_t cand            {find_rare_disc_candidate(text, pos, hints, &density_abandon)};
           if (density_abandon) {
-            if constexpr (requires(State & s) {
-              s.rare_disc_abandoned;
-            }) {
+            if constexpr (state_has_rare_disc_abandoned<State>) {
               state_.rare_disc_abandoned = true;
             }
             // Fall through to prefix / first-byte below for this candidate.
@@ -7974,9 +7969,7 @@ namespace real::detail {
             }
             break;
           case opcode::assert_lookaround:
-            if constexpr (requires(State & s) {
-            s.lookaround;
-          }) {
+            if constexpr (state_has_lookaround<State>) {
               if (lookaround_holds(instruction.arg16, pos)) {
                 stack.push_back({.pc = pc + 1, .block = block});
               }
