@@ -103,7 +103,7 @@ namespace real::detail {
       }
     }
     // Walk the sorted fold table per range (seek, then forward), never the whole table per class:
-    // O(table x ranges) made one icase `\w` cost six figures of comparisons, times each `{k}` copy.
+    // O(table x ranges) per class is quadratic on an icase `\w`, times each `{k}` copy.
     // Overlapping ranges may revisit an entry; the duplicate {p, p} is merged below.
     for (const code_range& r : in.ranges) {
       for (std::size_t i {find_fold_lower_bound(r.lo)}; i < unicode_fold_table_size; ++i) {
@@ -673,7 +673,7 @@ namespace real::detail {
     {
       // The one gate every code-point class passes: a producer that skips coalesce_ranges fails loudly. A
       // throw, not an assert, so it fires in release and stops an unordered `static_regex`. New classes
-      // only: checking every call added 36% to `(?i:\w{256})\w{256}` against the compile-scaling bound.
+      // only: checking every call charges compile time against the compile-scaling bound.
       std::size_t index {prog.cp_classes.size()};
       for (std::size_t i = 0; i < prog.cp_classes.size(); ++i) {
         const cp_class& existing {prog.cp_classes[i]};
@@ -730,10 +730,58 @@ namespace real::detail {
     static constexpr void emit_klass_cp(dynamic_program& prog,
                                         const class_def& cd)
     {
-      emit(prog, {.op = opcode::klass_cp, .arg16 = intern_cp_class(prog, cd)});
-      emit_klass(prog, utf8_cont_set()); // three continuation slots; klass_cp's skip picks the entry
+      emit_cp_chain(prog, {.op = opcode::klass_cp, .arg16 = intern_cp_class(prog, cd)});
+    }
+
+    /*!
+     * \brief Emits a code-point instruction and the three continuation slots its computed skip enters.
+     * \param[in,out] prog The program being built.
+     * \param[in]     head `klass_cp` or `klass_cp_loop_possessive`, its class already interned.
+     */
+    static constexpr void emit_cp_chain(dynamic_program& prog,
+                                        const instr&     head)
+    {
+      emit(prog, head);
       emit_klass(prog, utf8_cont_set());
       emit_klass(prog, utf8_cont_set());
+      emit_klass(prog, utf8_cont_set());
+    }
+
+    /*!
+     * \brief `\C`'s class: every byte, the newline included whatever dotall says.
+     * \return The class.
+     */
+    static constexpr char_class all_bytes_class()
+    {
+      char_class all;
+      all.set_range(0x00, 0xFF);
+      return all;
+    }
+
+    /*!
+     * \brief The single-byte part of `.`: ASCII, every raw byte in bytes mode, without the newline (and the
+     *        carriage return under ECMAScript) unless the node's own scope has dotall. Bytes and ECMAScript
+     *        are not scopable and stay global.
+     * \param[in] node The `.` node.
+     * \return The class.
+     */
+    constexpr char_class any_head_class(const ast_node& node) const
+    {
+      const flags node_flags {static_cast<flags>(node.effective_flags)};
+      char_class  head;
+      head.set_range(0x00, 0x7F);
+      if (has_flag(flags_, flags::bytes)) {
+        head.set_range(0x80, 0xFF); // any raw byte
+      }
+      if (!has_flag(node_flags, flags::dotall)) {
+        char_class newline;
+        newline.set('\n');
+        if (has_flag(flags_, flags::ecma)) {
+          newline.set('\r'); // ECMAScript `.` excludes \n AND \r (byte-level; U+2028/2029 are multi-byte)
+        }
+        head.bits[0] &= ~newline.bits[0];
+      }
+      return head;
     }
 
     static constexpr std::size_t fixed_width_class_max_members {8}; //!< Most members a \ref try_emit_fixed_width_class candidate may have.
@@ -940,11 +988,11 @@ namespace real::detail {
 
       // A bounded repeat emits its one class node per repetition (`\w{500}` folds 500 times), so the
       // fold is cached: four direct-mapped ways in a fixed array. Keep it unallocated: a vector sized by
-      // the class table cost patterns that fold once up to 19 %. Keyed by (class, mode, negated): a
+      // the class table charges patterns that fold once. Keyed by (class, mode, negated): a
       // scoped `(?i:...)` can fold one class two ways.
       if (mode != 0 && !std::is_constant_evaluated()) {
         // Cache the finished class, negation included: caching only the fold leaves finish_class's
-        // coalesce_ranges sort per repetition (icase `[a-z]` cost 24x its plain marginal).
+        // coalesce_ranges sort per repetition.
         const auto        key {static_cast<std::int32_t>((klass_idx * 6U) + (mode * 2U) + (node.negated ? 1U : 0U))};
         const std::size_t way {static_cast<std::size_t>(key) % fold_cache_ways};
         if (fold_key_[way] == key) {
@@ -1027,49 +1075,21 @@ namespace real::detail {
               emit_klass_cp(prog, effective_class(node));
               break;
             }
-            const class_def eff {effective_class(node)};
-            if (has_flag(flags_, flags::bytes) || eff.ranges.empty()) {
-              // Bytes mode, or no non-ASCII member: one bitmap (empty = never-match).
-              emit_klass(prog, eff.ascii);
-              break;
-            }
-            if (is_any_non_ascii(eff.ranges)) {
-              // `.`-family / `[^x]`: the shape the prefilter's codepoint_class_ascii route recognises.
-              emit_any_codepoint_class(prog, eff.ascii);
-              break;
-            }
             // A bitmap plus a few non-ASCII members (icase `[a-z]` gains the long s and Kelvin) stays a
             // `klass_cp`: as a byte-level alternation `(?i)[a-z]+` loses the class-loop route and falls to
             // the lazy DFA, several times slower. `klass_cp` also keeps one-pass eligibility
             // (build_utf8_trie) and `real::dfa` (dfa_flatten). Same-length members differing in one byte
             // (`(?i)é`) go fixed-width instead (try_emit_fixed_width_class).
-            emit_effective_class(prog, eff);
+            emit_effective_class(prog, effective_class(node));
             break;
           }
         case node_kind::any:
           if (node.raw_byte) {
-            // \C (RE2's raw-byte escape): any byte, '\n' included regardless of dotall.
-            char_class all;
-            all.set_range(0x00, 0xFF);
-            emit_klass(prog, all);
+            emit_klass(prog, all_bytes_class()); // \C (RE2's raw-byte escape)
             break;
           }
           {
-            // dotall comes from the node's own scope; bytes and ecma are not scopable and stay global.
-            const flags node_flags {static_cast<flags>(node.effective_flags)};
-            char_class  head;
-            head.set_range(0x00, 0x7F);
-            if (has_flag(flags_, flags::bytes)) {
-              head.set_range(0x80, 0xFF); // any raw byte
-            }
-            if (!has_flag(node_flags, flags::dotall)) {
-              char_class newline;
-              newline.set('\n');
-              if (has_flag(flags_, flags::ecma)) {
-                newline.set('\r'); // ECMAScript `.` excludes \n AND \r (byte-level; U+2028/2029 are multi-byte)
-              }
-              head.bits[0] &= ~newline.bits[0];
-            }
+            const char_class head {any_head_class(node)};
             if (has_flag(flags_, flags::bytes)) {
               emit_klass(prog, head);
             }
@@ -1707,6 +1727,10 @@ namespace real::detail {
     {
       const ast_node&    node {tree_.nodes[static_cast<std::size_t>(atom)]};
       const std::int32_t pc   {here(prog)};
+      const auto         loop = [&](opcode op, std::uint16_t arg16) {
+                                  return instr {.op = op, .arg16 = arg16, .primary_target = capture_start_slot,
+                                                .secondary_target = -1};
+                                };
       if (node.kind == node_kind::byte) {
         emit(prog, {.op             = opcode::byte_loop_possessive, .arg8 = node.byte,
                     .primary_target = capture_start_slot, .secondary_target = -1});
@@ -1714,61 +1738,26 @@ namespace real::detail {
       }
       if (node.kind == node_kind::any) {
         if (node.raw_byte) {
-          // \C: any byte, newline included, as in emit_node.
-          char_class all;
-          all.set_range(0x00, 0xFF);
-          emit(prog, {.op             = opcode::klass_loop_possessive, .arg16 = intern_class(prog, all),
-                      .primary_target = capture_start_slot, .secondary_target = -1});
+          emit(prog, loop(opcode::klass_loop_possessive, intern_class(prog, all_bytes_class()))); // \C, as in emit_node
           return pc;
         }
-        const flags node_flags {static_cast<flags>(node.effective_flags)};
-        char_class  head;
-        head.set_range(0x00, 0x7F);
+        const char_class head {any_head_class(node)};
         if (has_flag(flags_, flags::bytes)) {
-          head.set_range(0x80, 0xFF);
-        }
-        if (!has_flag(node_flags, flags::dotall)) {
-          char_class newline;
-          newline.set('\n');
-          if (has_flag(flags_, flags::ecma)) {
-            newline.set('\r');
-          }
-          head.bits[0] &= ~newline.bits[0];
-        }
-        if (has_flag(flags_, flags::bytes)) {
-          emit(prog, {.op             = opcode::klass_loop_possessive, .arg16 = intern_class(prog, head),
-                      .primary_target = capture_start_slot, .secondary_target = -1});
+          emit(prog, loop(opcode::klass_loop_possessive, intern_class(prog, head)));
           return pc;
         }
         const class_def cd {.ascii = head, .ranges = {{.lo = 0x80U, .hi = 0x10FFFFU}}};
-        emit(prog, {.op             = opcode::klass_cp_loop_possessive, .arg16 = intern_cp_class(prog, cd),
-                    .primary_target = capture_start_slot, .secondary_target = -1});
-        emit_klass(prog, utf8_cont_set());
-        emit_klass(prog, utf8_cont_set());
-        emit_klass(prog, utf8_cont_set());
+        emit_cp_chain(prog, loop(opcode::klass_cp_loop_possessive, intern_cp_class(prog, cd)));
         return pc;
       }
       // node_kind::klass
-      if (tree_.classes[static_cast<std::size_t>(node.klass)].codepoint_predicate) {
-        emit(prog, {.op             = opcode::klass_cp_loop_possessive,
-                    .arg16          = intern_cp_class(prog, effective_class(node)),
-                    .primary_target = capture_start_slot, .secondary_target = -1});
-        emit_klass(prog, utf8_cont_set());
-        emit_klass(prog, utf8_cont_set());
-        emit_klass(prog, utf8_cont_set());
-        return pc;
-      }
       const class_def eff {effective_class(node)};
-      if (has_flag(flags_, flags::bytes) || eff.ranges.empty()) {
-        emit(prog, {.op             = opcode::klass_loop_possessive, .arg16 = intern_class(prog, eff.ascii),
-                    .primary_target = capture_start_slot, .secondary_target = -1});
+      if (!tree_.classes[static_cast<std::size_t>(node.klass)].codepoint_predicate
+          && (has_flag(flags_, flags::bytes) || eff.ranges.empty())) {
+        emit(prog, loop(opcode::klass_loop_possessive, intern_class(prog, eff.ascii)));
         return pc;
       }
-      emit(prog, {.op             = opcode::klass_cp_loop_possessive, .arg16 = intern_cp_class(prog, eff),
-                  .primary_target = capture_start_slot, .secondary_target = -1});
-      emit_klass(prog, utf8_cont_set());
-      emit_klass(prog, utf8_cont_set());
-      emit_klass(prog, utf8_cont_set());
+      emit_cp_chain(prog, loop(opcode::klass_cp_loop_possessive, intern_cp_class(prog, eff)));
       return pc;
     }
 
@@ -1887,12 +1876,7 @@ namespace real::detail {
     {
       const ast_node& child {tree_.nodes[static_cast<std::size_t>(node.child)]};
       if (child.kind == node_kind::repeat && is_tier1_body(child.child)) {
-        if (capture_free) {
-          throw regex_error("possessive/atomic quantifiers inside a lookaround are not supported yet", 0,
-                            error_kind::unsupported);
-        }
-        emit_tier1_loop(prog, tier1_atom(child.child), child.min, child.max,
-                        tier1_capture_group(child.child), capture_free);
+        emit_possessive_repeat(prog, child.child, child.min, child.max, capture_free);
         return;
       }
       if (is_deterministic(node.child)) {

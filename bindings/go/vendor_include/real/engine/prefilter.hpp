@@ -200,7 +200,7 @@ namespace real::detail {
     }
     std::size_t p {1};
     // `\A`/`^` is peeled and reported, not rejected: `^X` searched is `X` in prefix mode, which reaches
-    // the class loop (81x faster on 100 KB). Multiline `^` stays disqualifying.
+    // the class loop. Multiline `^` stays disqualifying.
     bool anchored {false};
     if (p < code.size() && code[p].op == opcode::assert_position
         && static_cast<assert_kind>(code[p].arg8) == assert_kind::text_start) {
@@ -422,7 +422,7 @@ namespace real::detail {
    *        resuming the scan at \p cursor and leaving it past the last range consulted.
    *
    * \p cursor is a hint, not a precondition: an out-of-order interval rewinds it. Restarting at 0 per
-   * interval cost `\w` 771^2 steps, 95 % of compiling `\b\w+\b`.
+   * interval would be quadratic in the range count.
    *
    * \param[in]     lo     First code point of the interval.
    * \param[in]     hi     Last code point of the interval (inclusive).
@@ -877,9 +877,7 @@ namespace real::detail {
    * \param[in]     lookarounds    Bounded lookaround subs (for trailing-LA eligibility); may be empty.
    * \param[in,out] hints          Hint bag to fill (class-loop, fixed-shape, trailing-LA, …).
    */
-#if defined(__GNUC__) || defined(__clang__)
-  __attribute__((cold)) // build-time only, never on a search path
-#endif
+  REAL_BUILD_COLD // build-time only, never on a search path
   constexpr void detect_fast_shapes(std::span<const instr>          code,
                                     std::span<const char_class>     classes,
                                     std::span<const cp_class>       cp_classes,
@@ -1412,7 +1410,7 @@ namespace real::detail {
               }
               // A bare unbounded possessive class loop (`[a-z]++`) is the greedy language, so it takes the
               // batched greedy route, decided here as a hint: a class-index parameter in the runtime fillers
-              // cost the Unicode class rows 5.7-9.1 % (inlining budget). Bare only: a suffix means the match
+              // charges the Unicode class rows (inlining budget). Bare only: a suffix means the match
               // is not the run, a capture lives in possessive_group_start (unread by the greedy path), and
               // `X*+` with no mandatory copy can match empty.
               const bool redirect {arm && suffix_len == 0 && gs < 0 && has_mandatory && !has_wb
@@ -2193,7 +2191,7 @@ namespace real::detail {
     const char* const base  {text.data()};
     std::size_t       p     {pos};
     // Four blocks (64 candidates) per round, rejected by ONE test on their OR (any_pair64): at one block a
-    // round this filter ran ~13 % slower than `find` on a pure miss, at four ~2.5x faster than memchr.
+    // round this filter is slower than `find` on a pure miss.
     // Masks are taken in block then lane order: the first verified hit is the leftmost, as callers require.
     constexpr std::size_t unroll {4};
     while (p + (unroll * 16) <= last + 1) {
@@ -2307,7 +2305,7 @@ namespace real::detail {
    *        else the rarest-byte scan that counts its stops and judges their density.
    *
    * Out of line: next_candidate runs per candidate on routes that never reach a literal; inlined there it
-   * cost `\d{4}-\d{2}-\d{2}` 7 % on arm64.
+   * charges them.
    * \param[in]     text    The subject text.
    * \param[in]     pos     Index to start from (a stop the caller saw fail, or where a dense search starts).
    * \param[in]     literal The needle (>= 2 bytes).
@@ -2516,8 +2514,8 @@ namespace real::detail {
   }
 
   //! \brief Fewest branches for which the fingerprint replaces the pairs. Two pairs are two compares a block, a
-  //!        fingerprint six table lookups: on x86 (SSSE3) `cat|dog` measured +13 % by the fingerprint and three
-  //!        branches break even; AArch64's lookups are cheap enough that two branches already gain.
+  //!        fingerprint six table lookups: on x86 (SSSE3) two branches lose by the fingerprint and three
+  //!        break even; AArch64's lookups are cheap enough that two branches already gain.
 #if defined(__aarch64__)
   inline constexpr std::size_t alternation_nibbles_min_branches {2};
 #else
@@ -2754,8 +2752,7 @@ namespace real::detail {
     if (pos >= text.size() || n == 0U) {
       return npos;
     }
-    // The members arrive in the mask load's layout: a per-call copy into it was most of a +16 % on a
-    // 55 ns early-hit baseline.
+    // The members arrive in the mask load's layout: a per-call copy into it would charge an early hit.
     const std::size_t cnt {n <= 8U ? static_cast<std::size_t>(n) : std::size_t {8}};
     const std::size_t sz  {text.size()};
     std::size_t       at  {pos};
@@ -2811,7 +2808,7 @@ namespace real::detail {
    * a caller running this per rejected candidate (next_candidate's icase small-set route) would otherwise
    * rescan the rest for a rare or absent member (`(?i)cafe`'s `C` in lowercase text), O(n^2). Galloping
    * bounds a call to ~2x the distance to the hit. One member cannot go quadratic (a memchr costs its
-   * progress), and windowing it regressed x86 stop sets (`[^\x01]+`), so it takes one unbounded `memchr`.
+   * progress), and windowing it charges x86 stop sets (`[^\x01]+`), so it takes one unbounded `memchr`.
    *
    * \param[in] text The subject text.
    * \param[in] pos  Index to start scanning from.

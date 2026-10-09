@@ -360,7 +360,7 @@ namespace real {
      * \brief A typed reference into a possessive-loop body's operand space.
      *
      * Typed so equality compares \ref kind before the index: with bare indices, index 0 of two
-     * different tables compared equal and `[abc].*+` matched unconditionally.
+     * different tables would compare equal and `[abc].*+` match unconditionally.
      */
     struct class_ref
     {
@@ -400,8 +400,8 @@ namespace real {
      * \note **The field order is load-bearing.** Offsets 0..86 are the hot prefix every search reads
      *       (\ref prefix, \ref first_bytes, the `greedy_*` selectors, \ref fixed_shape,
      *       \ref fixed_alternation); the tail is per-route. **Append new fields at the END**: an insertion
-     *       reflows every later field and has moved hot fields across a cache line, measurably on patterns
-     *       that read none of it. Do not split into hot and cold structs: an indirection to the tail would
+     *       reflows every later field and can move hot fields across a cache line, charging patterns that
+     *       read none of it. Do not split into hot and cold structs: an indirection to the tail would
      *       charge every route that reads it.
      */
     struct pattern_hints
@@ -506,7 +506,7 @@ namespace real {
 
       //! \brief Trailing lookaround on a groupless greedy `class+` (`[a-z]+(?=[a-z])`): index into
       //!        lookarounds, -1 = not this shape. Leaves \ref greedy_class_loop at -1 on purpose: sharing
-      //!        that selector makes every `class+` search branch on this shape, measured dearer.
+      //!        that selector makes every `class+` search branch on this shape.
       std::int16_t trailing_lookaround {-1};
       bool         trailing_la_cp      {};   //!< The \ref trailing_lookaround body is a `klass_cp` (cp_classes index).
       std::int32_t trailing_la_class   {-1}; //!< Class index for \ref trailing_lookaround body; −1 if unset.
