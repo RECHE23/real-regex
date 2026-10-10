@@ -151,3 +151,43 @@ TEST(the_stretch_is_marked_from_the_state_the_walk_really_stood_on)
   const auto              second {machine.match(subject, 1, memo)};
   EXPECT(second.has_value() && second->rule_index == 2U && second->length == 51U);
 }
+
+// dfa::munch: the same answer as match, and a promise -- when it says no text after the subject can change the
+// answer, none does. Checked over every prefix of random subjects and every continuation of a few bytes, with
+// the memo armed by the earlier munches as a lexer would arm it.
+TEST(dfa_munch_answers_as_match_and_keeps_its_promise)
+{
+  const std::string_view alphabet      {"abc \n"};
+  std::mt19937           rng           {20261010U};
+  std::size_t            final_answers {0};
+  std::size_t            open_answers  {0};
+  for (const std::vector<std::string>& sources : rule_sets()) {
+    const real::dfa d {build(sources)};
+    for (int round {0}; round < 60; ++round) {
+      std::string text;
+      for (std::size_t n {rng() % 12}; n > 0; --n) {
+        text += alphabet[rng() % alphabet.size()];
+      }
+      real::dfa_munch_memo memo  {text.size()};
+      real::dfa_munch_memo plain {text.size()};
+      for (std::size_t offset {0}; offset <= text.size(); ++offset) {
+        const real::dfa_munch said {d.munch(text, offset, memo)};
+        EXPECT(same(said.match, d.match(text, offset, plain)));
+        if (said.more_text_may_change) {
+          ++open_answers;
+          continue;
+        }
+        ++final_answers;
+        for (int extension {0}; extension < 20; ++extension) {
+          std::string longer {text};
+          for (std::size_t n {1 + (rng() % 4)}; n > 0; --n) {
+            longer += alphabet[rng() % alphabet.size()];
+          }
+          EXPECT(same(said.match, d.match(std::string_view {longer}.substr(offset))));
+        }
+      }
+    }
+  }
+  EXPECT(final_answers > 200U); // the promise is put to the test
+  EXPECT(open_answers > 50U);   // and the walk that reaches the end does say so
+}

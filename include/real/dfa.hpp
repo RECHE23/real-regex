@@ -81,6 +81,18 @@ namespace real {
     std::size_t   length;     //!< Byte length of the (non-empty) match.
   };
 
+  /*!
+   * \brief A munch, and whether text after the subject could change it (\ref dfa::munch).
+   */
+  struct dfa_munch
+  {
+    std::optional<dfa_match> match; //!< The winning rule and length, as \ref dfa::match answers.
+    //! False once the walk died within the subject: no text appended after it can change \ref match. True
+    //! when the walk was still alive at the subject's end, or stopped where a memo proved no accept follows
+    //! (proven for this subject, not for a longer one).
+    bool more_text_may_change;
+  };
+
   /*! \brief DFA construction internals: subset construction over a flattened NFA. Not a stable API. */
   namespace detail {
 
@@ -1045,25 +1057,29 @@ namespace real {
                                    std::size_t      offset,
                                    dfa_munch_memo&  memo) const
     {
-      if (memo.size_ != subject.size() || offset > subject.size()) [[unlikely]] {
-        detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another subject, or the offset is past it");
-      }
-      if (memo.owner_ != tables_.trans.data()) [[unlikely]] {
-        if (memo.owner_ != nullptr) {
-          detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another DFA");
-        }
-        memo.owner_ = tables_.trans.data();
-      }
-      if (!memo.marked_.empty()) [[unlikely]] {
-        return match_armed(subject, offset, memo);
-      }
-      // Unarmed: the plain walk plus one comparison (see dfa_munch_memo::short_stretch).
-      const walk_end w {walk<false>(subject, offset, nullptr)};
-      if (w.stop - w.best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
-        mark_dead_stretch(subject, state_at(subject, offset, w.best_end), w.best_end, w.stop, memo);
-      }
-      memo.transitions_ += w.stop - offset;
-      return answer(w, offset);
+      return answer(memo_walk(subject, offset, memo), offset);
+    }
+
+    /*!
+     * \brief \ref match(std::string_view, std::size_t, dfa_munch_memo&) const, and whether text after
+     *        \p subject could change the answer: a lexer reading text that arrives in pieces commits to a
+     *        munch only when it could not.
+     *
+     * The walk is the same; telling costs nothing more. A walk that died within the subject proves the
+     * answer final, whatever follows. One alive at the subject's end, or stopped by the memo, may not be.
+     *
+     * \param[in]     subject The text so far; every call with \p memo must pass the same one.
+     * \param[in]     offset  Where this munch starts (at most `subject.size()`).
+     * \param[in,out] memo    The subject's memo (see \ref dfa_munch_memo).
+     * \return The munch and whether more text may change it.
+     * \throws std::invalid_argument As \ref match(std::string_view, std::size_t, dfa_munch_memo&) const.
+     */
+    [[nodiscard]] dfa_munch munch(std::string_view subject,
+                                  std::size_t      offset,
+                                  dfa_munch_memo&  memo) const
+    {
+      const walk_end w {memo_walk(subject, offset, memo)};
+      return dfa_munch {.match = answer(w, offset), .more_text_may_change = !w.died};
     }
 
     /*!
@@ -1244,7 +1260,43 @@ namespace real {
       std::size_t   best_end; //!< Where that accept ended (the walk's start when none).
       std::size_t   stop;     //!< Where the walk stopped: a dead state, a proven-dead pair, or the end.
       std::uint32_t resume;   //!< Armed walks only: the state at \ref best_end, where a dead stretch begins.
+      bool          died;     //!< It stopped on the dead state: nothing after \ref stop could revive it.
     };
+
+    /*!
+     * \brief The memo-checked munch walk behind \ref match and \ref munch: the plain walk, or the armed one
+     *        once the subject's memo has proved a dead stretch, marking a long new one.
+     * \param[in]     subject The text; every call with \p memo must pass the same one.
+     * \param[in]     offset  Where the walk starts.
+     * \param[in,out] memo    The subject's memo.
+     * \return The walk.
+     * \throws std::invalid_argument If \p memo belongs to another subject or DFA, or \p offset is past it.
+     */
+    REAL_ALWAYS_INLINE
+    walk_end memo_walk(std::string_view subject,
+                       std::size_t      offset,
+                       dfa_munch_memo&  memo) const
+    {
+      if (memo.size_ != subject.size() || offset > subject.size()) [[unlikely]] {
+        detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another subject, or the offset is past it");
+      }
+      if (memo.owner_ != tables_.trans.data()) [[unlikely]] {
+        if (memo.owner_ != nullptr) {
+          detail::dfa_memo_misuse("real::dfa::match: the memo belongs to another DFA");
+        }
+        memo.owner_ = tables_.trans.data();
+      }
+      if (!memo.marked_.empty()) [[unlikely]] {
+        return match_armed(subject, offset, memo);
+      }
+      // Unarmed: the plain walk plus one comparison (see dfa_munch_memo::short_stretch).
+      const walk_end w {walk<false>(subject, offset, nullptr)};
+      if (w.stop - w.best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
+        mark_dead_stretch(subject, state_at(subject, offset, w.best_end), w.best_end, w.stop, memo);
+      }
+      memo.transitions_ += w.stop - offset;
+      return w;
+    }
 
     /*!
      * \brief The munch walk from the start state at \p offset until the DFA dies or the subject ends.
@@ -1288,7 +1340,7 @@ namespace real {
           }
         }
       }
-      return walk_end {.rule = best_rule, .best_end = best_end, .stop = i, .resume = resume};
+      return walk_end {.rule = best_rule, .best_end = best_end, .stop = i, .resume = resume, .died = state == 0U};
     }
 
     /*!
@@ -1335,16 +1387,16 @@ namespace real {
      * \return The winning rule index and byte length, or `std::nullopt`.
      */
     REAL_NOINLINE
-    std::optional<dfa_match> match_armed(std::string_view subject,
-                                         std::size_t      offset,
-                                         dfa_munch_memo&  memo) const
+    walk_end match_armed(std::string_view subject,
+                         std::size_t      offset,
+                         dfa_munch_memo&  memo) const
     {
       const walk_end w {walk<true>(subject, offset, &memo)};
       if (w.stop - w.best_end > dfa_munch_memo::short_stretch) {
         mark_dead_stretch(subject, w.resume, w.best_end, w.stop, memo);
       }
       memo.transitions_ += w.stop - offset;
-      return answer(w, offset);
+      return w;
     }
 
     /*!
