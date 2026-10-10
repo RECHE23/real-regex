@@ -35,6 +35,8 @@ real::dfa:
   publish_all: opt-in lexer automaton; the page is the whole public surface
 real::dfa_match:
   publish_all: two public fields -- winning rule and length
+real::dfa_munch:
+  publish_all: two public fields -- the match and whether more text may change it
 real::dfa_munch_memo:
   publish_all: per-subject memo; its constructor and transitions() are the whole public surface
 real::dfa_fidelity:

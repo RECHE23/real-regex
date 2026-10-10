@@ -22,6 +22,10 @@ Interface
    :project: real
    :members:
 
+.. doxygenstruct:: real::dfa_munch
+   :project: real
+   :members:
+
 .. doxygenenum:: real::dfa_mode
    :project: real
 
