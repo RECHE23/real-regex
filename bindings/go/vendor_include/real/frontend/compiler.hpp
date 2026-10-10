@@ -70,10 +70,11 @@ namespace real::detail {
   /*!
    * \brief Expands a character class to its Unicode simple case-fold closure (text-mode `icase`).
    *
-   * The fold acts on the whole class, across the ASCII boundary both ways, before negation: each
-   * ASCII member contributes its partners (`k`↦Kelvin becomes a range), and each fold entry inside a
-   * class range contributes its partners (`[U+0080-U+10FFFF]` pulls `k`/`K` into the bitmap). The
-   * ASCII-letter literal fold takes this same route.
+   * The fold acts on the members written as characters, ranges or properties, across the ASCII boundary
+   * both ways, before negation: each ASCII member contributes its partners (`k`↦Kelvin becomes a range),
+   * and each fold entry inside a class range contributes its partners (`[U+0080-U+10FFFF]` pulls `k`/`K`
+   * into the bitmap). A shorthand member stays as it is, as in `re`: folding `\W` would pull in iota
+   * through U+0345, a non-word mark. The ASCII-letter literal fold takes this same route.
    *
    * \param[in] in The class as written.
    * \return Its case-fold closure: the folded ASCII bitmap plus the coalesced non-ASCII ranges.
@@ -91,6 +92,7 @@ namespace real::detail {
                                              ranges.push_back({.lo = p, .hi = p});        // non-ASCII partner (coalesced below)
                                            }
                                          }};
+    const std::vector<code_range>& cased_ranges {in.has_sets ? in.cased_ranges : in.ranges};
     for (std::uint32_t cp = 0; cp < 0x80U; ++cp) {
       if (in.ascii.test(static_cast<std::uint8_t>(cp))) {
         const std::size_t idx {find_fold_index(cp)};
@@ -105,7 +107,7 @@ namespace real::detail {
     // Walk the sorted fold table per range (seek, then forward), never the whole table per class:
     // O(table x ranges) per class is quadratic on an icase `\w`, times each `{k}` copy.
     // Overlapping ranges may revisit an entry; the duplicate {p, p} is merged below.
-    for (const code_range& r : in.ranges) {
+    for (const code_range& r : cased_ranges) {
       for (std::size_t i {find_fold_lower_bound(r.lo)}; i < unicode_fold_table_size; ++i) {
         const fold_entry& entry {unicode_fold_table[i]};
         if (entry.cp > r.hi) {
@@ -956,7 +958,7 @@ namespace real::detail {
           fold_ascii_case(folded.ascii);     // bytes / ASCII mode (re.A): ASCII-only fold, no Unicode partners
         }
         else {
-          folded = unicode_casefold(folded); // text: full Unicode fold of the whole class, both directions
+          folded = unicode_casefold(folded); // text: full Unicode fold of the non-shorthand members, both directions
         }
         fold_key_[way] = key;
         fold_val_[way] = finish_class(node, std::move(folded));

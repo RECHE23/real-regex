@@ -165,7 +165,9 @@ namespace real::detail {
       return true;
     }
     const auto k {static_cast<assert_kind>(code[p].arg8)};
-    if (!is_word_boundary_kind(k)) {
+    // A boundary whose word-ness a scoped `(?a:...)` flips (arg16) is not the program's: the fast paths
+    // test the wrap with the program's.
+    if (!is_word_boundary_kind(k) || code[p].arg16 != 0) {
       return false;
     }
     hint = wb_hint_of(k);
@@ -243,6 +245,9 @@ namespace real::detail {
     std::uint8_t wb_trail {0};
     if (from < code.size() && code[from].op == opcode::assert_position
         && is_word_boundary_kind(static_cast<assert_kind>(code[from].arg8))) {
+      if (code[from].arg16 != 0) {
+        return {}; // a boundary a scoped `(?a:...)` flips: not the program's word-ness (see peel_optional_wb)
+      }
       wb_trail = wb_hint_of(static_cast<assert_kind>(code[from].arg8));
       ++from;
     }
