@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <real/unicode/unicode_fold.hpp>
+#include <real/unicode/utf8.hpp>
 
 namespace real::compat::re2::detail {
 
@@ -192,6 +193,23 @@ namespace real::compat::re2::detail {
       next = std::max(next, skip_to);
     }
     emit(next, 0x10FFFFU);
+  }
+
+  /*!
+   * \brief The length of the character at \p pos: its UTF-8 sequence when whole, else one byte (RE2 steps
+   *        over an invalid byte alone). One past the end of \p text, one.
+   * \param[in] text The text.
+   * \param[in] pos  A position in \p text, or its end.
+   * \return How far the next character starts from \p pos.
+   */
+  [[nodiscard]] inline std::size_t next_character_length(std::string_view text,
+                                                         std::size_t      pos)
+  {
+    if (pos >= text.size()) {
+      return 1;
+    }
+    const real::detail::decoded_codepoint decoded {real::detail::decode_codepoint_strict(text, pos)};
+    return decoded.valid ? decoded.length : 1U;
   }
 
   /*!
