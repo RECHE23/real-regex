@@ -412,9 +412,9 @@ differential harness allowlists (the compat behavior is the spec behavior):
 - **POSIX bracket expressions** `[[:digit:]]`, `[[.a.]]`, `[[=a=]]`: the C++ standard adds them to its
   ECMAScript grammar ([re.grammar]), and libstdc++ and libc++ both read them. `real::compat` rewrites a
   class as its ASCII ranges (the C locale) and stays on the linear engine. A class under `icase`, where
-  std tests the folded character, and a collating element or equivalence class of more than one
-  character are only std's to read: the strict policy rejects them, `policy::fallback` routes them to
-  `std::regex`.
+  std tests the folded character, a collating element and an equivalence class are only std's to read
+  (libstdc++ puts `A` in `[=a=]`, libc++ does not): the strict policy rejects them, `policy::fallback`
+  routes them to `std::regex`.
 
 The compat layer builds `real` with `flags::ecma`, which makes the engine follow ECMAScript grammar
 rather than `real`'s default (Python-flavoured) one. The differences it aligns — each surfaced by the

@@ -10,7 +10,6 @@
 
 #include <real/version.hpp>
 
-#include <cctype>
 #include <cstddef>
 #include <initializer_list>
 #include <atomic>
@@ -450,8 +449,9 @@ namespace real::compat {
      * \param[in] icase Whether the pattern is case-insensitive: std then tests a class against the folded
      *                  character, which ranges folded by REAL do not reproduce for `[:lower:]` or `[:upper:]`.
      * \return The pattern with each class rewritten, or `std::nullopt` when only std reads it as written: a
-     *         class under \p icase, an unknown class name, or a collating element or equivalence class of
-     *         more than one character (`[.a.]` and `[=a=]` are `a`).
+     *         class under \p icase, an unknown class name, a collating element `[.x.]` or an equivalence
+     *         class `[=x=]`, whose reading the implementations do not share (libstdc++ puts `A` in `[=a=]`
+     *         and rejects `[.-.]`).
      */
     [[nodiscard]] inline std::optional<std::string> translate_ecma_classes(std::string_view p,
                                                                            bool             icase)
@@ -480,16 +480,6 @@ namespace real::compat {
           continue;
         }
         if (c == '[' && i + 1 < p.size() && (p[i + 1] == ':' || p[i + 1] == '.' || p[i + 1] == '=')) {
-          // A collating element or an equivalence class of one character is that character in the C locale.
-          if (p[i + 1] != ':' && i + 4 < p.size() && p[i + 3] == p[i + 1] && p[i + 4] == ']') {
-            const char member {p[i + 2]};
-            if (!std::isalnum(static_cast<unsigned char>(member))) {
-              out += '\\';
-            }
-            out += member;
-            i   += 4;
-            continue;
-          }
           if (p[i + 1] != ':' || icase) {
             return std::nullopt;
           }

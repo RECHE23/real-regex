@@ -280,7 +280,7 @@ TEST(compat_libstdcxx_deviations_are_allowlisted)
     EXPECT(!rc::regex_search(std::string("d]]"), re));
     EXPECT(rc::regex("[^[:alpha:]_]").uses_real());
     for (const char* pattern : {"[[:alpha:]]+", "[^[:alpha:]]", "[[:alnum:]_]+", "[[:space:]]", "[[:punct:]]+",
-                                "[[:xdigit:]]{2}", "[[.a.]]", "[[=a=]]", "[[.-.]x]", "[a[:digit:]]"}) {
+                                "[[:xdigit:]]{2}", "[a[:digit:]]"}) {
       const rc::regex  compat(pattern);
       const std::regex native(pattern);
       EXPECT(compat.uses_real());
@@ -288,10 +288,13 @@ TEST(compat_libstdcxx_deviations_are_allowlisted)
         EXPECT_EQ(rc::regex_search(std::string(text), compat), std::regex_search(std::string(text), native));
       }
     }
-    // A class under icase, or a multi-character collating element: only std reads them as written.
+    // A class under icase, a collating element, an equivalence class: only std reads them as written (libstdc++
+    // puts `A` in `[=a=]` where libc++ does not).
     EXPECT_THROWS(rc::regex("[[:lower:]]", rc::regex::icase), rc::regex_error);
-    EXPECT_THROWS(rc::regex("[[.space.]]"), rc::regex_error);
+    EXPECT_THROWS(rc::regex("[[.a.]]"), rc::regex_error);
+    EXPECT_THROWS(rc::regex("[[=a=]]"), rc::regex_error);
     EXPECT(!rc::regex("[[:lower:]]", rc::regex::icase, rc::policy::fallback).uses_real());
+    EXPECT(!rc::regex("[[=a=]]", rc::regex_constants::ECMAScript, rc::policy::fallback).uses_real());
   }
 
   // Identity escapes `\A` / `\Z`: ECMAScript Annex B treats them as the literal A / Z; libstdc++
