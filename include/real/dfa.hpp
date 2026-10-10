@@ -1067,8 +1067,9 @@ namespace real {
      *        munch only when it could not.
      *
      * The walk is the same; telling costs nothing more. A walk that died within the subject proves the
-     * answer final, whatever follows; so does one the memo stopped, while every stretch it marked was
-     * walked to a death. One alive at the subject's end may not be final.
+     * answer final, whatever follows; so does one that ends in a state every byte leaves for the dead one,
+     * and one the memo stopped while every stretch it marked was walked to a death. Any other walk alive at
+     * the subject's end may not be final.
      *
      * \param[in]     subject The text so far; every call with \p memo must pass the same one.
      * \param[in]     offset  Where this munch starts (at most `subject.size()`).
@@ -1084,7 +1085,10 @@ namespace real {
       // Stopped short of the end without dying, the walk met a mark: final when every mark came from a walk
       // that died (no accept follows such a pair, whatever comes after), not when one was alive at the end.
       const bool stopped_on_a_mark {!w.died && w.stop < subject.size()};
-      const bool final_answer {w.died || (stopped_on_a_mark && !memo.marks_from_open_walks_)};
+      // Alive at the end in a state every byte leaves for the dead one, the walk is done all the same (`a[^z]*z`
+      // after its `z`): no byte can extend it, and no accept here rests on the end of the text.
+      const bool terminal {!w.died && w.stop == subject.size() && leads_only_to_death(w.last)};
+      const bool final_answer {w.died || terminal || (stopped_on_a_mark && !memo.marks_from_open_walks_)};
       return dfa_munch {.match = answer(w, offset), .more_text_may_change = !final_answer};
     }
 
@@ -1267,7 +1271,21 @@ namespace real {
       std::size_t   stop;     //!< Where the walk stopped: a dead state, a proven-dead pair, or the end.
       std::uint32_t resume;   //!< Armed walks only: the state at \ref best_end, where a dead stretch begins.
       bool          died;     //!< It stopped on the dead state: nothing after \ref stop could revive it.
+      std::uint32_t last;     //!< The state it stopped in (0 when it died).
     };
+
+    /*!
+     * \brief Whether every byte takes \p state to the dead state.
+     * \param[in] state A live state.
+     * \return True when no walk can go on from it.
+     */
+    [[nodiscard]] bool leads_only_to_death(std::uint32_t state) const noexcept
+    {
+      const std::size_t row {static_cast<std::size_t>(state) * tables_.num_classes};
+      return std::all_of(tables_.trans.begin() + static_cast<std::ptrdiff_t>(row),
+                         tables_.trans.begin() + static_cast<std::ptrdiff_t>(row + tables_.num_classes),
+                         [](std::uint32_t next) { return next == 0U; });
+    }
 
     /*!
      * \brief The memo-checked munch walk behind \ref match and \ref munch: the plain walk, or the armed one
@@ -1347,7 +1365,8 @@ namespace real {
           }
         }
       }
-      return walk_end {.rule = best_rule, .best_end = best_end, .stop = i, .resume = resume, .died = state == 0U};
+      return walk_end {.rule = best_rule, .best_end = best_end, .stop = i, .resume = resume, .died = state == 0U,
+                       .last = state};
     }
 
     /*!

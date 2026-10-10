@@ -221,9 +221,22 @@ TEST(dfa_munch_is_final_on_a_mark_from_a_walk_that_died)
   EXPECT(memo.armed());
   real::dfa_munch_memo open_memo {run.size()};
   for (std::size_t offset {0}; offset < run.size(); ++offset) {
-    // From an `a`, `c` may still come; from a `b` no rule goes past it, and the walk dies on the next byte --
-    // but on the last `b` there is no next byte: alive at the end, it may change.
-    EXPECT_EQ(d.munch(run, offset, open_memo).more_text_may_change, run[offset] == 'a' || offset + 1 == run.size());
+    // From an `a`, `c` may still come; from a `b` no rule goes past it (on the last `b`, a terminal state).
+    EXPECT_EQ(d.munch(run, offset, open_memo).more_text_may_change, run[offset] == 'a');
   }
   EXPECT(open_memo.armed());
+}
+
+// A walk alive at the end in a state no byte leads on from is done: `a[^z]*z` after its `z`.
+TEST(dfa_munch_is_final_in_a_terminal_state)
+{
+  const real::dfa       d    {build({"a[^z]*z", "[a-y]+", " "})};
+  const std::string     done {"abc dez"};
+  real::dfa_munch_memo  memo {done.size()};
+  const real::dfa_munch at_z {d.munch(done, 0, memo)};
+  EXPECT(at_z.match && at_z.match->length == done.size());
+  EXPECT(!at_z.more_text_may_change);
+  const std::string    open      {"abc de"};
+  real::dfa_munch_memo open_memo {open.size()};
+  EXPECT(d.munch(open, 0, open_memo).more_text_may_change); // a `z` may still come
 }
