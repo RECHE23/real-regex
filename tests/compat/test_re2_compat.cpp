@@ -845,3 +845,66 @@ TEST(re2_log_errors_names_the_pattern_as_re2_does)
   EXPECT_EQ(from_add, want);
 }
 #endif
+
+// RE2's flavor where it reads text differently from Python's, each answer taken from libre2 itself.
+TEST(re2_flavor_ascii_shorthands_and_boundaries)
+{
+  const std::string e {"\xC3\xA9"};                  // é
+  EXPECT(!rc2::RE2::FullMatch(e, R"(\w)"));
+  EXPECT(rc2::RE2::FullMatch(e, R"(\W)"));
+  EXPECT(!rc2::RE2::FullMatch("\xD9\xA3", R"(\d)")); // Arabic-indic three
+  EXPECT(!rc2::RE2::FullMatch("\v", R"(\s)"));       // RE2's \s has no vertical tab
+  EXPECT(rc2::RE2::FullMatch("\v", "[[:space:]]"));  // the POSIX class has it
+  EXPECT(rc2::RE2::PartialMatch("a" + e, R"(a\b)")); // é is not a word character
+  EXPECT(!rc2::RE2::PartialMatch(e + "a", R"(\B\w)"));
+  // Folding happens before negation: the Kelvin sign and the long s fold into \w, and out of \W.
+  EXPECT(rc2::RE2::FullMatch("\xE2\x84\xAA", R"((?i)\w)"));
+  EXPECT(!rc2::RE2::FullMatch("\xE2\x84\xAA", R"((?i)\W)"));
+  EXPECT(!rc2::RE2::FullMatch("k", R"((?i)[\W])"));
+  EXPECT(!rc2::RE2::FullMatch("\xC5\xBF", R"((?i)[^\w])"));
+  EXPECT(rc2::RE2::FullMatch("\xC5\xBF", R"([\W])")); // without folding, the long s is not \w
+  // The scope of (?i) follows the groups.
+  EXPECT(rc2::RE2::FullMatch("x\xC5\xBF", R"((?i:x)[\W])"));
+  EXPECT(!rc2::RE2::FullMatch("\xC5\xBF", R"((?i:[\W]))"));
+  // A shorthand inside \Q...\E is literal text.
+  EXPECT(rc2::RE2::FullMatch(R"(\w)", R"(\Q\w\E)"));
+}
+
+TEST(re2_flavor_posix_classes)
+{
+  EXPECT(rc2::RE2::FullMatch("abc", "[[:alpha:]]+"));
+  EXPECT(!rc2::RE2::FullMatch("a]", "[[:alpha:]]+"));
+  EXPECT(rc2::RE2::FullMatch("1", "[[:^alpha:]]"));
+  EXPECT(!rc2::RE2::FullMatch("k", "(?i)[[:^alpha:]]"));
+  EXPECT(rc2::RE2::FullMatch("A", "(?i)[[:lower:]]"));
+  EXPECT(rc2::RE2::FullMatch("_", "[[:word:]]"));
+  EXPECT(!rc2::RE2::FullMatch("\xC3\xA9", "[[:word:]]"));
+  EXPECT(rc2::RE2::FullMatch("x", "[[:^space:]x]"));
+}
+
+TEST(re2_flavor_dollar_is_the_end_of_the_text)
+{
+  EXPECT(!rc2::RE2::PartialMatch("a\n", "a$"));
+  EXPECT(rc2::RE2::PartialMatch("a\n", "(?m)a$"));
+  std::string s {"ac c\n"};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&s, "$", "<>"), 1);
+  EXPECT_EQ(s, std::string {"ac c\n<>"});
+}
+
+// RE2's walk: after an empty match the next search starts one character on, and an empty match where the
+// previous match ended is skipped -- never Python's second try for a longer match at the same place.
+TEST(re2_global_replace_steps_past_an_empty_match)
+{
+  std::string lazy {"cbc "};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&lazy, "c*?", "<\\0>"), 5);
+  EXPECT_EQ(lazy, std::string {"<>c<>b<>c<> <>"});
+  std::string empty_or {"cbc "};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&empty_or, "a|", "<\\0>"), 5);
+  EXPECT_EQ(empty_or, std::string {"<>c<>b<>c<> <>"});
+  std::string bounds {"cbc "};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&bounds, R"(\b)", "<>"), 2);
+  EXPECT_EQ(bounds, std::string {"<>cbc<> "});
+  std::string utf8 {"\xC3\xA9\xC3\xA9"};
+  EXPECT_EQ(rc2::RE2::GlobalReplace(&utf8, "x*", "-"), 3); // one whole character per step
+  EXPECT_EQ(utf8, std::string {"-\xC3\xA9-\xC3\xA9-"});
+}

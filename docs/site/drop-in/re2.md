@@ -64,6 +64,12 @@ comment of
   bounded lookarounds and possessive quantifiers (RE2 rejects both outright)
   and a wider `\p{…}` set (`sc=`/`scx=` and the UCD binary properties RE2's
   grammar lacks).
+- **RE2's reading of the syntax** — `\w`, `\d`, `\s` are ASCII, `\b`/`\B`
+  read ASCII word characters, `[[:alpha:]]` is a POSIX class, `$` without
+  `(?m)` is the end of the text, and `GlobalReplace` steps past an empty match
+  as RE2 does. Checked against libre2 over every code point. One orbit
+  differs: under `(?i)`, `İ`/`ı` (U+0130, U+0131) fold with `i`/`I`, as in
+  Python's `re`, where RE2 keeps them apart.
 - **Two places REAL is deliberately stricter** — duplicate capture names
   (`(?P<n>…)(?P<n>…)`, ambiguous match-by-name) and surrogate code points in
   `\x{…}`/`\u`/`\U`/`\N`. Both a clean `ok() == false`; both principled
@@ -92,7 +98,7 @@ there, sometimes the fastest route), and above it the DFA-eligible members
 switch automatically onto a fused single-pass scan that stays flat as the set
 grows. Measured against Google's `RE2::Set` on the same host it is near
 parity — ahead on sparse corpora, a hair behind on dense ones. The residual
-cuts both ways: lookaround and Unicode-`\w` patterns stay on per-pattern walks
+cuts both ways: lookaround patterns stay on per-pattern walks
 and degrade at large N — but `RE2::Set` cannot compile a lookaround at all,
 and REAL leads on multi-pattern extraction. Numbers in
 {doc}`Performance <../performance/index>`.

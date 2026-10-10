@@ -10,6 +10,12 @@
  * (match-by-name would be ambiguous) and surrogate code points in `\x{…}`, `\u`, `\U`, `\N` (not Unicode
  * scalars). Both surface as `ok() == false`.
  *
+ * **RE2's reading of the syntax.** `\w \d \s` are ASCII, `\b \B` read ASCII word characters, `[[:alpha:]]` is a
+ * POSIX class, `$` without `(?m)` is the end of the text, and a class member folds before it is negated
+ * (`(?i)\W` leaves out the Kelvin sign): see re2/flavor.hpp. `GlobalReplace` walks as RE2's does. Case folding
+ * keeps REAL's tables, which are Python's: under `(?i)`, `İ` and `ı` (U+0130, U+0131) go with `i` and `I`,
+ * where RE2 keeps them apart.
+ *
  * **No fallback, no exceptions.** A pattern or option this layer cannot honor is rejected as RE2 rejects a
  * syntax error: `ok() == false`, with `error()` saying why.
  *
@@ -42,6 +48,7 @@
 #include <real/regex_set.hpp>
 
 #include "arg.hpp"
+#include "flavor.hpp"
 
 namespace real::compat::re2 {
 
@@ -430,7 +437,7 @@ namespace real::compat::re2 {
           RE2::log_error(options_, "Error parsing", pattern, reason); // RE2's Set prints the pattern whole
           return -1;
         }
-        std::string wrapped {anchor_wrap(pattern)};
+        std::string wrapped {anchor_wrap(detail::translate_flavor(pattern, !options_.case_sensitive()))};
         try {
           const real::regex probe(wrapped, RE2::options_to_flags(options_));
           program_bytes_        += RE2::program_bytes(probe);
@@ -759,16 +766,22 @@ namespace real::compat::re2 {
       if (str == nullptr || !re.ok()) {
         return 0;
       }
-      std::string            out; // sized at the first match: a miss allocates nothing
+      std::string            out;         // sized at the first match: a miss allocates nothing
       const std::string_view text {*str};
-      std::size_t            last           {};
-      int                    count          {};
-      bool                   have_prev_end  {false};
-      std::size_t            prev_end       {};
-      const auto             matches        {re.longest_match_ ? re.regex_->find_iter_longest(text) : re.regex_->find_iter(text)};
-      for (auto walk {matches.begin()}; !walk.exhausted(); ++walk) {
-        const auto& match {*walk};
-        if (match.start() == match.end() && have_prev_end && match.start() == prev_end) {
+      std::size_t            last     {}; // where the text not yet copied starts
+      std::size_t            pos      {}; // where the next search starts
+      std::size_t            last_end {real::npos};
+      int                    count    {};
+      // RE2's walk, not Python's: after an empty match the next search starts one character on (no second
+      // try for a longer match at the same place), and an empty match where the previous match ended is
+      // skipped, one whole UTF-8 character at a time.
+      while (pos <= text.size()) {
+        const auto match {re.longest_match_ ? re.regex_->search_longest(text, pos) : re.regex_->search(text, pos)};
+        if (!match) {
+          break;
+        }
+        if (match.start() == match.end() && match.start() == last_end) {
+          pos = match.start() + next_character_length(text, match.start());
           continue;
         }
         if (count == 0) {
@@ -778,9 +791,9 @@ namespace real::compat::re2 {
         if (!expand_rewrite(out, rewrite, match)) {
           return 0;
         }
-        last          = match.end();
-        prev_end      = match.end();
-        have_prev_end = true;
+        last     = match.end();
+        last_end = match.end();
+        pos      = match.end();
         ++count;
       }
       if (count == 0) {
@@ -789,6 +802,23 @@ namespace real::compat::re2 {
       out.append(text.substr(last));
       *str = std::move(out);
       return count;
+    }
+
+    /*!
+     * \brief The length of the character at \p pos: its UTF-8 sequence when whole, else one byte (RE2 steps
+     *        over an invalid byte alone). One past the end of \p text, one.
+     * \param[in] text The text.
+     * \param[in] pos  A position in \p text, or its end.
+     * \return How far the next character starts from \p pos.
+     */
+    [[nodiscard]] static std::size_t next_character_length(std::string_view text,
+                                                           std::size_t      pos)
+    {
+      if (pos >= text.size()) {
+        return 1;
+      }
+      const real::detail::decoded_codepoint decoded {real::detail::decode_codepoint_strict(text, pos)};
+      return decoded.valid ? decoded.length : 1U;
     }
 
     /*!
@@ -862,8 +892,9 @@ namespace real::compat::re2 {
      */
     [[nodiscard]] static real::flags options_to_flags(const Options& options)
     {
-      // allow_raw_byte always: `\C` is safe on this byte-offset API (see the file comment).
-      real::flags result {real::flags::allow_raw_byte};
+      // allow_raw_byte always: `\C` is safe on this byte-offset API (see the file comment). dollar_endonly
+      // always: RE2's `$` without `(?m)` is the end of the text, never before a final newline.
+      real::flags result {real::flags::allow_raw_byte | real::flags::dollar_endonly};
       if (!options.case_sensitive()) {
         result = result | real::flags::icase;
       }
@@ -950,7 +981,8 @@ namespace real::compat::re2 {
         return;
       }
       longest_match_ = options.longest_match();
-      const std::string effective {options.literal() ? QuoteMeta(pattern) : std::string(pattern)};
+      const std::string effective {options.literal() ? QuoteMeta(pattern)
+                                                     : detail::translate_flavor(pattern, !options.case_sensitive())};
       try {
         regex_.emplace(effective, options_to_flags(options));
       } catch (const real::regex_error& e) {

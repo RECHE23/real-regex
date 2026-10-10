@@ -21,6 +21,7 @@
 #include <re2/stringpiece.h> // re2::StringPiece — portable vs absl::string_view (apt RE2 10 vs brew 11)
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -371,23 +372,83 @@ namespace {
     }
   }
 
-  // Unicode / class engine differences — allowlisted with proof, never silently.
-  void check_engine_word_class(Report& r)
+  //! \p cp as UTF-8.
+  std::string utf8(std::uint32_t cp)
   {
-    // BENCHMARKS.md: RE2 \w is ASCII-ish; REAL \w is UTS#18 (UCD 16). café → diverge by design.
-    const std::string cafe {"caf\xc3\xa9"};
-    const bool        d {drop::RE2::FullMatch(cafe, "\\w+")};
-    const bool        t {::RE2::FullMatch(cafe, "\\w+")};
-    if (d && !t) {
-      note_engine(r, R"(\w+ on UTF-8 letter)",
-                  "REAL UCD16 word vs RE2 ~15 ASCII-ish \\w (BENCHMARKS.md) — allowlisted");
+    std::string out;
+    if (cp < 0x80U) {
+      out += static_cast<char>(cp);
     }
-    else if (d != t) {
-      note_bug(r, R"(\w+ cafe unexpected polarity)", "drop=" + std::to_string(d) + " true=" +
-                                                       std::to_string(t));
+    else if (cp < 0x800U) {
+      out += static_cast<char>(0xC0U | (cp >> 6U));
+      out += static_cast<char>(0x80U | (cp & 0x3FU));
+    }
+    else if (cp < 0x10000U) {
+      out += static_cast<char>(0xE0U | (cp >> 12U));
+      out += static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU));
+      out += static_cast<char>(0x80U | (cp & 0x3FU));
     }
     else {
-      note_ok(r, R"(\w+ cafe — same verdict this RE2 pin)");
+      out += static_cast<char>(0xF0U | (cp >> 18U));
+      out += static_cast<char>(0x80U | ((cp >> 12U) & 0x3FU));
+      out += static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU));
+      out += static_cast<char>(0x80U | (cp & 0x3FU));
+    }
+    return out;
+  }
+
+  // Every class shape the flavor rewrites, over every scalar value, plus each word boundary on both sides of
+  // every scalar value: the drop-in must answer as libre2. The one tolerated orbit is İ / ı (U+0130,
+  // U+0131) under folding: REAL folds as Python's `re`, which puts them with i and I; RE2's tables do not.
+  void check_flavor_classes(Report& r)
+  {
+    static const char* const shapes[] {
+      R"(\w)", R"(\W)", R"(\d)", R"(\D)", R"(\s)", R"(\S)", R"([\w])", R"([\W])", R"([^\w])", R"([^\W])",
+      R"([\Wa])", R"([\D\s])", "[[:alpha:]]", "[[:^alpha:]]", "[^[:alpha:]]", "[[:word:]]", "[[:^space:]x]",
+      "[[:lower:]]", "[[:upper:]]", "[[:punct:]]", "[a-z]", "k", "[^k]"};
+    static const char* const boundaries[] {R"(\w\b)", R"(\B\w)", R"(\b)", R"(\B)"};
+    for (const char* const fold : {"", "(?i)"}) {
+      const auto compare {[&r, fold](const std::string& pattern, bool boundary) {
+                            const drop::RE2 d(pattern);
+                            ::RE2::Options  to;
+                            to.set_log_errors(false);
+                            const ::RE2 t(pattern, to);
+                            if (!both_ok(d, t)) {
+                              note_bug(r, pattern, "one side does not compile");
+                              return;
+                            }
+                            std::size_t differ {0};
+                            for (std::uint32_t cp {0}; cp < 0x110000U; ++cp) {
+                              if (cp >= 0xD800U && cp <= 0xDFFFU) {
+                                continue;
+                              }
+                              if (*fold != '\0' && (cp == 0x130U || cp == 0x131U)) {
+                                continue; // the tolerated orbit (see above)
+                              }
+                              const std::string c {utf8(cp)};
+                              bool same {};
+                              if (boundary) {
+                                same = drop::RE2::PartialMatch(c + "a", d) == ::RE2::PartialMatch(c + "a", t)
+                                       && drop::RE2::PartialMatch("a" + c, d) == ::RE2::PartialMatch("a" + c, t);
+                              }
+                              else {
+                                same = drop::RE2::FullMatch(c, d) == ::RE2::FullMatch(c, t);
+                              }
+                              differ += same ? 0U : 1U;
+                            }
+                            if (differ != 0U) {
+                              note_bug(r, pattern, std::to_string(differ) + " code points answer differently");
+                            }
+                            else {
+                              note_ok(r, "flavor " + pattern + " over every code point");
+                            }
+                          }};
+      for (const char* const shape : shapes) {
+        compare(std::string {fold} + shape, false);
+      }
+      for (const char* const shape : boundaries) {
+        compare(std::string {fold} + shape, true);
+      }
     }
   }
 
@@ -497,8 +558,7 @@ namespace {
     check_compile_parity(r, R"(\x{D800})"); // braced hex surrogate — RE2 accepts, real rejects (sub-edge)
     check_compile_parity(r, R"((?P<n>a)(?P<n>b))");
 
-    // --- Engine-diff allowlist (justified) ---
-    check_engine_word_class(r);
+    check_flavor_classes(r);
   }
 
   // Inject a deliberate false mismatch so a green run is not a mute no-op.
