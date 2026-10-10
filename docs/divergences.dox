@@ -37,7 +37,9 @@ literals, classes and ranges — identical to `re.IGNORECASE`: `é` matches `É`
 `k` matches Kelvin (U+212A), `ß` matches `ẞ` (but not `ss` — simple, not full, folding). A cased
 literal is promoted to a foldable code point; a \\xHH or octal byte escape keeps byte provenance and
 **never folds** (\\xe9 under `IGNORECASE` does not match `É`) — the same deliberate byte-vs-code-point
-split described in the hex-escape section below.
+split described in the hex-escape section below. A shorthand inside a class is not folded, as in `re`:
+`(?i)[^\\W\\d_]` is the letters, iota included, although U+0345 (a non-word mark in `\\W`) folds to iota.
+A `\\p{…}` property does fold, as in the `regex` module: `(?i)\\p{Lu}` matches `a`.
 
 The \\w \\W \\d \\D \\s \\S shorthands are **Unicode** in text mode (matching `re`): `\\w` matches any
 Unicode word code point (é, ٣, ², astral letters…), `\\d` any `Nd` digit (Arabic ٣, fullwidth ９…),
