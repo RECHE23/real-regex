@@ -2,6 +2,19 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.10
+
+10.10 (**fixes from the October audit, and `dfa::munch`**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
+`2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode**: one route changed: a word boundary under a scoped `(?a:…)` at the edge of a fixed-width
+  pattern declines the fixed-shape route (ffe42497); no benchmarked pattern has one. `dfa::match` now goes
+  through the walk `dfa::munch` shares (74812a29): measured neutral within ±3 % on SciLex's `json`, `python` and
+  `cpp` tokenize (arm64, Apple clang, best of 5, three A/B rounds).
+- **§B**: no Python-path change.
+- **Not in a table**: `can_extend` (a probe path), the `(?i)` class fold (construction), `regex_set` construction,
+  and the `compat::re2` rewrite (translation at construction; `\w` is now an ASCII class there).
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.9
 
 10.9 (**how far before a position a match reads**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
