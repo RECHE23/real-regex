@@ -271,15 +271,27 @@ TEST(compat_libstdcxx_deviations_are_allowlisted)
     EXPECT_EQ(m.length(0), 1);
   }
 
-  // POSIX class: ECMAScript has no POSIX classes — `[[:alpha:]]+` / `[[:digit:]]+` are literal char
-  // classes (Option B, spec-primary). libstdc++ applies a non-portable POSIX extension; libc++ does
-  // not. real::compat stays on real and follows the spec; the deviation is allowlisted here.
+  // POSIX class: [re.grammar] adds `[[:name:]]`, `[[.x.]]` and `[[=x=]]` to ECMAScript, and std reads them
+  // (C locale: ASCII). real::compat rewrites a class as its ranges and stays on real.
   {
     const rc::regex re("[[:digit:]]+");
     EXPECT(re.uses_real());
-    EXPECT(!rc::regex_search(std::string("123"), re)); // spec: no [,:,d,i,g,t before a `]`
-    EXPECT(rc::regex_search(std::string("d]]"), re));  // spec: 'd' in class, ']]' is `]+`
-    EXPECT(rc::regex("[[:alpha:]]+").uses_real());     // also stays on real (no textual screen)
+    EXPECT(rc::regex_search(std::string("123"), re));
+    EXPECT(!rc::regex_search(std::string("d]]"), re));
+    EXPECT(rc::regex("[^[:alpha:]_]").uses_real());
+    for (const char* pattern : {"[[:alpha:]]+", "[^[:alpha:]]", "[[:alnum:]_]+", "[[:space:]]", "[[:punct:]]+",
+                                "[[:xdigit:]]{2}", "[[.a.]]", "[[=a=]]", "[[.-.]x]", "[a[:digit:]]"}) {
+      const rc::regex  compat(pattern);
+      const std::regex native(pattern);
+      EXPECT(compat.uses_real());
+      for (const char* text : {"abc", "A1", "_", " \t", "!?", "ff", "-", "x", "9", ""}) {
+        EXPECT_EQ(rc::regex_search(std::string(text), compat), std::regex_search(std::string(text), native));
+      }
+    }
+    // A class under icase, or a multi-character collating element: only std reads them as written.
+    EXPECT_THROWS(rc::regex("[[:lower:]]", rc::regex::icase), rc::regex_error);
+    EXPECT_THROWS(rc::regex("[[.space.]]"), rc::regex_error);
+    EXPECT(!rc::regex("[[:lower:]]", rc::regex::icase, rc::policy::fallback).uses_real());
   }
 
   // Identity escapes `\A` / `\Z`: ECMAScript Annex B treats them as the literal A / Z; libstdc++

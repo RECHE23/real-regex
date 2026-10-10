@@ -405,15 +405,17 @@ plus the option screen — `real` is never even tried, so these are std by const
 `real::compat` follows the **ECMAScript spec**; the following are libstdc++ deviations that the
 differential harness allowlists (the compat behavior is the spec behavior):
 
-- **POSIX bracket expressions** `[[:digit:]]`: ECMAScript has *no* POSIX classes. `[[:digit:]]` is
-  the literal character class `{[ : d i g t}` followed by `]+`. `real::compat` follows the spec.
-  libstdc++ applies a **non-standard, non-portable** POSIX extension here — **libc++ does not**, so
-  relying on it is already non-portable across `std::regex` implementations. *For POSIX classes, use
-  the POSIX grammar (`regex_constants::extended`) explicitly, which routes to `std::regex`.*
 - **Lookbehind** `(?<=…)` / `(?<!…)`: ES2018 has it and `real` implements it (bounded, ReDoS-safe);
   libstdc++'s ECMAScript engine rejects it. `real::compat` accepts and matches it.
 
 ## Syntax notes (for migrants)
+
+- **POSIX bracket expressions** `[[:digit:]]`, `[[.a.]]`, `[[=a=]]`: the C++ standard adds them to its
+  ECMAScript grammar ([re.grammar]), and libstdc++ and libc++ both read them. `real::compat` rewrites a
+  class as its ASCII ranges (the C locale) and stays on the linear engine. A class under `icase`, where
+  std tests the folded character, and a collating element or equivalence class of more than one
+  character are only std's to read: the strict policy rejects them, `policy::fallback` routes them to
+  `std::regex`.
 
 The compat layer builds `real` with `flags::ecma`, which makes the engine follow ECMAScript grammar
 rather than `real`'s default (Python-flavoured) one. The differences it aligns — each surfaced by the
