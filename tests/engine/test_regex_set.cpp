@@ -361,6 +361,27 @@ TEST(regex_set_deferred_build_past_the_dfa_bound_keeps_walking)
   EXPECT(set.matches(subject) == expected);
 }
 
+// The same past a set large enough to build at construction: the constructor gives up the fused DFA and
+// walks, rather than throw dfa_error out of a set whose members each compile.
+TEST(regex_set_eager_build_past_the_dfa_bound_keeps_walking)
+{
+  std::vector<std::string> pats {"a.{7}", "b.{7}", "c.{7}"};
+  for (std::size_t i {pats.size()}; i < real::regex_set::fused_min_eligible; ++i) {
+    pats.push_back("ERR" + std::to_string(i) + "[0-9]{2}");
+  }
+  const std::vector<std::string_view> views(pats.begin(), pats.end());
+  const real::regex_set               set {std::span<const std::string_view> {views}};
+  EXPECT(!set.uses_fused());
+  const std::string_view subject          {"zz a1234567 ERR4012"};
+  std::vector<bool>      expected;
+  for (const std::string& pat : pats) {
+    expected.push_back(static_cast<bool>(real::regex {pat}.search(subject)));
+  }
+  EXPECT(expected[0] && expected[40]);
+  EXPECT(set.matches(subject) == expected);
+  EXPECT(!set.uses_fused());
+}
+
 // --- byte filter: the SKIP path, which nothing above exercises ---------------------------------
 //
 // Every subject in this file so far contains a byte one member can start with, so the filter finds a
