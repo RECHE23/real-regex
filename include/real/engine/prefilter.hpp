@@ -691,12 +691,11 @@ namespace real::detail {
         }
         if (in.op == opcode::assert_position) {
           const auto k {static_cast<assert_kind>(in.arg8)};
-          if (is_word_boundary_kind(k) && in.arg16 == 0) {
+          if (is_word_boundary_kind(k)) {
             lead_wb = wb_hint_of(k);
           }
           else {
-            // Non-wb lead (e.g. ^), or a boundary a scoped `(?a:...)` flips — exact_literal still ok via
-            // replay; no wb_lead hint.
+            // Non-wb lead (e.g. ^) — exact_literal still ok via replay; no wb_lead hint.
             lead_wb = 0;
           }
           break; // only the first lead assert matters for the wrap hint
@@ -708,8 +707,8 @@ namespace real::detail {
         }
         else if (seen_byte && code[i].op == opcode::assert_position) {
           const auto k {static_cast<assert_kind>(code[i].arg8)};
-          if (is_word_boundary_kind(k) && trail_wb == 0 && code[i].arg16 == 0) {
-            trail_wb = wb_hint_of(k); // single trailing wb allowed, with the program's word-ness
+          if (is_word_boundary_kind(k) && trail_wb == 0) {
+            trail_wb = wb_hint_of(k); // single trailing wb allowed
           }
           else {
             blocking_assert = true;   // inter-assert, second trail, or non-wb trail

@@ -15,7 +15,7 @@ namespace {
   real::detail::inner_literal extract(std::string_view pattern,
                                       real::flags      f = real::flags::none)
   {
-    return real::detail::extract_inner_literal(real::detail::parse(pattern, f), f);
+    return real::detail::extract_inner_literal(real::detail::parse(pattern, f));
   }
 
   bool is_lit(const real::detail::inner_literal& il,

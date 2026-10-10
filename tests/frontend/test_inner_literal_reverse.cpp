@@ -19,7 +19,7 @@ namespace {
                         std::size_t      min_start = 0)
   {
     const real::detail::ast           tree {real::detail::parse(pattern, real::flags::none)};
-    const real::detail::inner_literal il   {real::detail::extract_inner_literal(tree, real::flags::none)};
+    const real::detail::inner_literal il   {real::detail::extract_inner_literal(tree)};
     return real::detail::prefix_reverse_start(tree, il.prefix_child_count, real::flags::none, text, h, min_start);
   }
 }
@@ -52,7 +52,7 @@ TEST(prefix_reverse_two_halves_differential)
   };
   for (const testcase& tc : cases) {
     const real::detail::ast           tree {real::detail::parse(tc.pattern, real::flags::none)};
-    const real::detail::inner_literal il   {real::detail::extract_inner_literal(tree, real::flags::none)};
+    const real::detail::inner_literal il   {real::detail::extract_inner_literal(tree)};
     if (!il.found() || il.prefix_child_count < 0) {
       continue;
     }
