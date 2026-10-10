@@ -33,16 +33,18 @@ namespace {
 // Soundness against brute force: whenever some continuation of up to two pieces changes the match (any
 // group), can_extend said so. Patterns cover consuming loops, alternation priority, captures, every
 // assertion that looks right, bounded and unbounded lookaheads, lookbehinds, possessive loops (one that ends
-// the pattern, where nothing after it reads the end), and
-// code-point classes whose code points the end of the text can cut in half.
+// the pattern, where nothing after it reads the end), code-point classes whose code points the end of the
+// text can cut in half, and lookarounds holding an assertion that reads past them: `$` before a final
+// newline, `\b` before a code point the end cuts short, a lookbehind ending at the end of the text.
 TEST(can_extend_is_true_whenever_more_text_changes_the_match)
 {
   const std::string_view patterns[] {"[a-z]+", "a|ab", "(a)(b)?", "\\w+\\b", "\\w+$", "a$", "x\\Z", "\\bfoo",
                                      "\\w+(?=\\()", "a(?!b)", "(?=.*z)a", "(?<=a)b", "a*+b?", "é+", "\\w+",
                                      "[^ ]+", "(?m)a$", "a\\B", "\\d{2,3}", "(ab|a)(c?)", "", "\\s*",
-                                     "a*+", "[a-z]++", "é*+"};
+                                     "a*+", "[a-z]++", "é*+", "a(?=$)", "(?!$)", "(?<=$)", "(?<=a$)",
+                                     "a(?=\\b)", "(?<=a\\b)", "a(?!\\B)", "(?<!\\b)"};
   const std::string_view texts[]  {"", "a", "ab", "ab ", "abc", "foo", "fo", "x", "é", "\xC3", "a\n", "12", "a(",
-                                   "ab(", "za"};
+                                   "ab(", "za", "\n", "a\xC3"};
   const std::string_view pieces[] {"a", "b", " ", "z", "(", "\n", "1", "\xA9", "\xC3", "é", "_"};
   int                    changed  {0};
   int                    compared {0};
@@ -92,6 +94,7 @@ TEST(can_extend_is_false_once_the_text_decides)
   EXPECT(!real::regex {"\"[^\"]*\""}.can_extend("\"ab\" x", 0));
   EXPECT(!real::regex {"\\w+(?=\\()"}.can_extend("abc(   ", 0));
   EXPECT(!real::regex {"(?<=a)b"}.can_extend("ab c", 1));
+  EXPECT(!real::regex {"(?<=a)x"}.can_extend("ax", 1)); // a lookbehind that reads only left stays shut
   EXPECT(!real::regex {"é+"}.can_extend("éé!", 0));
   // And true while it does not.
   EXPECT(real::regex {"[a-z]+"}.can_extend("ab", 0));

@@ -7576,6 +7576,32 @@ namespace real::detail {
     }
 
     /*!
+     * \brief Whether \p sub holds an assertion that reads what follows where it stands: `$`, `\Z`, `\z`,
+     *        `\b`, `\B`, `\<`, `\>`.
+     * \param[in] sub The lookaround (they do not nest, so its code is all its own).
+     * \return True when the lookaround may read past the bytes it consumes.
+     */
+    [[nodiscard]] constexpr bool reads_right(const lookaround_sub& sub) const
+    {
+      const std::size_t first {static_cast<std::size_t>(sub.code_offset)};
+      const std::size_t last  {first + static_cast<std::size_t>(sub.code_length)};
+      for (std::size_t i {first}; i < last; ++i) {
+        const instr& in {prog_.code[i]};
+        if (in.op == opcode::assert_position) {
+          switch (static_cast<assert_kind>(in.arg8)) {
+            case assert_kind::text_start:
+            case assert_kind::line_start:
+            case assert_kind::line_start_cr:
+              break;
+            default:
+              return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    /*!
      * \brief Probe of \ref extends_past_end on an epsilon step at \p pos: an assertion that looks right, a
      *        lookahead, or a possessive test whose answer the end of the text decides.
      * \param[in] instruction The instruction the closure walk is at.
@@ -7612,10 +7638,17 @@ namespace real::detail {
           break;
         case opcode::assert_lookaround:
           {
-            // A window that reaches the end may read past it, an assertion at its own end included.
-            const lookaround_sub& sub {prog_.lookarounds[instruction.arg16]};
-            open = sub.direction == look_dir::ahead
-                   && (sub.l_max < 0 || pos + static_cast<std::size_t>(sub.l_max) >= size);
+            // A window that reaches the end may read past it. An assertion that looks right reads up to
+            // one code point past wherever it stands: the window's last byte for a lookahead, the
+            // position itself for a lookbehind.
+            const lookaround_sub& sub   {prog_.lookarounds[instruction.arg16]};
+            const std::size_t     right {reads_right(sub) ? 4U : 0U};
+            if (sub.direction == look_dir::ahead) {
+              open = sub.l_max < 0 || pos + static_cast<std::size_t>(sub.l_max) + right >= size;
+            }
+            else {
+              open = right != 0U && pos + right > size;
+            }
             break;
           }
         case opcode::byte_loop_possessive:
