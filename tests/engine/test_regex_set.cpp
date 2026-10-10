@@ -374,6 +374,7 @@ TEST(regex_set_eager_build_past_the_dfa_bound_keeps_walking)
   EXPECT(!set.uses_fused());
   const std::string_view subject          {"zz a1234567 ERR4012"};
   std::vector<bool>      expected;
+  expected.reserve(pats.size());
   for (const std::string& pat : pats) {
     expected.push_back(static_cast<bool>(real::regex {pat}.search(subject)));
   }
