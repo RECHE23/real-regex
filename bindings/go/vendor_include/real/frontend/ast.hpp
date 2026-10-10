@@ -104,7 +104,7 @@ namespace real::detail {
     std::vector<code_range> ranges;                   //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
     bool                    codepoint_predicate {};   //!< Emit as a match-time `klass_cp` (a Unicode shorthand `\w`/`\d`/`\s` in text mode), not the byte-NFA.
     bool                    has_sets            {};   //!< A shorthand (`\w`, `\d`, `\s`, negated or not) is a member: a case fold expands only \ref cased_ranges past ASCII.
-    std::vector<code_range> cased_ranges;             //!< When \ref has_sets holds, the non-ASCII members a fold expands (characters, ranges, properties).
+    std::vector<code_range> cased_ranges        {};   //!< When \ref has_sets holds, the non-ASCII members a fold expands (characters, ranges, properties).
   };
 
   /*!
