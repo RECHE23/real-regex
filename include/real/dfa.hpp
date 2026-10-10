@@ -1288,8 +1288,8 @@ namespace real {
     }
 
     /*!
-     * \brief The memo-checked munch walk behind \ref match and \ref munch: the plain walk, or the armed one
-     *        once the subject's memo has proved a dead stretch, marking a long new one.
+     * \brief The memo-checked munch walk behind \ref match and \ref munch, the plain walk or, once the
+     *        subject's memo has proved a dead stretch, the armed one; it marks a long new stretch.
      * \param[in]     subject The text; every call with \p memo must pass the same one.
      * \param[in]     offset  Where the walk starts.
      * \param[in,out] memo    The subject's memo.

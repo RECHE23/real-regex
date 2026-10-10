@@ -158,6 +158,8 @@ TEST(the_stretch_is_marked_from_the_state_the_walk_really_stood_on)
 TEST(dfa_munch_answers_as_match_and_keeps_its_promise)
 {
   const std::string_view alphabet      {"abc \n"};
+  // Fixed seed: the subjects are part of the test, so a failure names the same one every run.
+  // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)
   std::mt19937           rng           {20261010U};
   std::size_t            final_answers {0};
   std::size_t            open_answers  {0};
@@ -175,7 +177,12 @@ TEST(dfa_munch_answers_as_match_and_keeps_its_promise)
       const std::size_t length {round % 2 == 0 ? rng() % 12 : 40 + (rng() % 60)};
       const bool        dense  {round % 4 == 1}; // long runs of a and b, a space now and then
       for (std::size_t n {length}; n > 0; --n) {
-        text += dense ? (rng() % 50 == 0 ? ' ' : "ab"[rng() % 2]) : alphabet[rng() % alphabet.size()];
+        if (dense) {
+          text += rng() % 50 == 0 ? ' ' : "ab"[rng() % 2];
+        }
+        else {
+          text += alphabet[rng() % alphabet.size()];
+        }
       }
       real::dfa_munch_memo memo  {text.size()};
       real::dfa_munch_memo plain {text.size()};
