@@ -100,11 +100,13 @@ namespace real::detail {
    */
   struct class_def
   {
-    char_class              ascii;                    //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
-    std::vector<code_range> ranges;                   //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
-    bool                    codepoint_predicate {};   //!< Emit as a match-time `klass_cp` (a Unicode shorthand `\w`/`\d`/`\s` in text mode), not the byte-NFA.
-    bool                    has_sets            {};   //!< A shorthand (`\w`, `\d`, `\s`, negated or not) is a member: a case fold expands only \ref cased_ranges past ASCII.
-    std::vector<code_range> cased_ranges        {};   //!< When \ref has_sets holds, the non-ASCII members a fold expands (characters, ranges, properties).
+    char_class              ascii;                  //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
+    std::vector<code_range> ranges;                 //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
+    bool                    codepoint_predicate {}; //!< Emit as a match-time `klass_cp` (a Unicode shorthand `\w`/`\d`/`\s` in text mode), not the byte-NFA.
+    bool                    has_sets            {}; //!< A shorthand (`\w`, `\d`, `\s`, negated or not) is a member: a case fold expands only \ref cased_ranges past ASCII.
+    //! When \ref has_sets holds, the non-ASCII members a fold expands (characters, ranges, properties). Its `{}`
+    //! spares a caller writing `{.ascii = ..., .ranges = ...}` a missing-initializer warning.
+    std::vector<code_range> cased_ranges {};        // NOLINT(readability-redundant-member-init)
   };
 
   /*!
