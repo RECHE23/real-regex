@@ -36,8 +36,8 @@ members and ranges: `[é]`, `[éàü]`, `[à-ÿ]`, `[a-zé]`, and their negation
 all match exactly like `re` (the code-point oracle). They compile to the canonical
 UTF-8-ranges automaton, so a class never matches an overlong or surrogate byte sequence —
 `[é]` matches only `C3 A9`, and `[^é]` matches every valid code point *except* é. `.` and an
-ASCII-only negated class such as `[^x]` still match *any* non-ASCII code point (the
-pre-existing sound superset, which also accepts a malformed byte sequence as "a character").
+ASCII-only negated class such as `[^x]` match *any* valid non-ASCII code point, and no malformed
+byte sequence: neither matches a lone `FF` or a truncated `C3`, as neither does in `re`.
 A malformed UTF-8 member in the pattern is a `real::regex_error`. In **bytes mode** there is no
 code point there to be malformed — the unit is a byte — so a non-ASCII class member is simply the
 bytes it is written with: `re.compile(b"[\xc3\xa9]")` is a two-byte class matching either byte, and
@@ -489,7 +489,7 @@ pin goes red and this page moves with it.
 ## Variable-width lookbehind (a capability beyond re)
 
 REAL accepts any **bounded** lookbehind, including variable-width alternations such as
-`(?<=a|bb)`, which `re` and PCRE reject as non-fixed-width. The bound keeps the scan
+`(?<=a|bb)`, which `re` rejects as non-fixed-width (PCRE2 accepts a bounded one too: 10.47, measured). The bound keeps the scan
 linear; see <a href="api/design.html">How REAL Works — a guided tour</a> for how the lookbehind sub-VM works.
 
 **`\b` / `\B` inside lookbehind.** Word-boundary assertions in a lookbehind are first-class and

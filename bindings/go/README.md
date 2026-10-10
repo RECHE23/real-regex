@@ -61,7 +61,7 @@ returns an error and this package does not. **This list is open and deliberately
 among them:
 
 - bounded lookahead / lookbehind (`(?=...)`, `(?<=...)`, etc.) and possessive quantifiers (`a++`),
-  both in linear time — no backtracking and no ReDoS exposure, which is REAL's whole design point;
+  both in linear time — no unbounded backtracking and no ReDoS exposure, which is REAL's whole design point;
 - a `\` before a non-ASCII character is that character (`\é` matches `é`, `[\à-\é]` is a range),
   Python `re`'s rule — `regexp` answers `invalid escape sequence`, as it does for `\q`;
 - `\Z` (end-of-text anchor here, `invalid escape sequence` there);

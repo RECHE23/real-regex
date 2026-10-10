@@ -15,7 +15,8 @@ lookarounds RE2 can't do — and a drop-in `re`-compatible Python binding.
 from end to end, with an `re`-compatible Python binding.
 
 - **Linear time, always.** The engine is a Pike VM (Thompson NFA simulation):
-  no backtracking, ReDoS-safe by construction.
+  no unbounded backtracking (a short search may take a bounded backtracker that visits each
+  state at each position at most once), ReDoS-safe by construction.
 - **Constexpr-friendly.** Patterns known at compile time are parsed, compiled
   and matched at compile time.
 - **Minimal memory.** Static (sizes fixed at compile time, zero allocation),
