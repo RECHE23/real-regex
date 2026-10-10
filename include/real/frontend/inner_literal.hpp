@@ -562,11 +562,15 @@ namespace real::detail {
    * Leading and trailing top-level `\b`/`\B` are peeled — recorded in \ref inner_literal::wb_lead,
    * \ref inner_literal::wb_trail and \ref inner_literal::prefix_skip — so `\b\w+@\w+\b` keeps the `@`
    * route; a mid-body wb anchor still declines. `confirm_at` on the full program re-checks the boundaries.
-   * \param[in] tree The parsed pattern.
+   * A peeled anchor is tested with the program's word-ness, so one inside a scoped `(?a:...)` or `(?-a:...)`
+   * that flips it declines the route.
+   * \param[in] tree          The parsed pattern.
+   * \param[in] program_flags The flags the whole program compiles under.
    * \return The best required literal, or a default-constructed \ref inner_literal (`len == 0`) when the
    *         pattern declines.
    */
-  constexpr inner_literal extract_inner_literal(const ast& tree)
+  constexpr inner_literal extract_inner_literal(const ast& tree,
+                                                flags      program_flags)
   {
     inner_literal_detail::walk_state st;
     if (tree.root < 0) {
@@ -583,6 +587,15 @@ namespace real::detail {
       std::size_t  hi       {kids.size()};
       std::uint8_t wb_lead  {0};
       std::uint8_t wb_trail {0};
+      const auto   flips_word {[&tree, program_flags](std::int32_t idx) {
+                                 const auto node_flags {static_cast<flags>(tree.nodes[static_cast<std::size_t>(idx)].effective_flags)};
+                                 return !has_flag(program_flags, flags::bytes)
+                                        && has_flag(node_flags, flags::ascii) != has_flag(program_flags, flags::ascii);
+                               }};
+      if ((lo < hi && inner_literal_detail::is_top_wb_anchor(tree, kids[lo]) && flips_word(kids[lo]))
+          || (lo < hi && inner_literal_detail::is_top_wb_anchor(tree, kids[hi - 1]) && flips_word(kids[hi - 1]))) {
+        return inner_literal {};
+      }
       // Peel a single optional lead `\b`/`\B` (multiple consecutive wb asserts are declined — rare & ambiguous).
       if (lo < hi && inner_literal_detail::is_top_wb_anchor(tree, kids[lo])) {
         wb_lead = inner_literal_detail::wb_hint_from_anchor(

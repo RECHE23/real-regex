@@ -165,7 +165,9 @@ namespace real::detail {
       return true;
     }
     const auto k {static_cast<assert_kind>(code[p].arg8)};
-    if (!is_word_boundary_kind(k)) {
+    // A boundary whose word-ness a scoped `(?a:...)` flips (arg16) is not the program's: the fast paths
+    // test the wrap with the program's.
+    if (!is_word_boundary_kind(k) || code[p].arg16 != 0) {
       return false;
     }
     hint = wb_hint_of(k);
@@ -243,6 +245,9 @@ namespace real::detail {
     std::uint8_t wb_trail {0};
     if (from < code.size() && code[from].op == opcode::assert_position
         && is_word_boundary_kind(static_cast<assert_kind>(code[from].arg8))) {
+      if (code[from].arg16 != 0) {
+        return {}; // a boundary a scoped `(?a:...)` flips: not the program's word-ness (see peel_optional_wb)
+      }
       wb_trail = wb_hint_of(static_cast<assert_kind>(code[from].arg8));
       ++from;
     }
@@ -686,11 +691,12 @@ namespace real::detail {
         }
         if (in.op == opcode::assert_position) {
           const auto k {static_cast<assert_kind>(in.arg8)};
-          if (is_word_boundary_kind(k)) {
+          if (is_word_boundary_kind(k) && in.arg16 == 0) {
             lead_wb = wb_hint_of(k);
           }
           else {
-            // Non-wb lead (e.g. ^) — exact_literal still ok via replay; no wb_lead hint.
+            // Non-wb lead (e.g. ^), or a boundary a scoped `(?a:...)` flips — exact_literal still ok via
+            // replay; no wb_lead hint.
             lead_wb = 0;
           }
           break; // only the first lead assert matters for the wrap hint
@@ -702,8 +708,8 @@ namespace real::detail {
         }
         else if (seen_byte && code[i].op == opcode::assert_position) {
           const auto k {static_cast<assert_kind>(code[i].arg8)};
-          if (is_word_boundary_kind(k) && trail_wb == 0) {
-            trail_wb = wb_hint_of(k); // single trailing wb allowed
+          if (is_word_boundary_kind(k) && trail_wb == 0 && code[i].arg16 == 0) {
+            trail_wb = wb_hint_of(k); // single trailing wb allowed, with the program's word-ness
           }
           else {
             blocking_assert = true;   // inter-assert, second trail, or non-wb trail

@@ -112,6 +112,24 @@ TEST(scoped_ascii_word_boundary)
   EXPECT(!real::regex("(?a:\\Bx)").search("éx").matched()); // \B is the complement
 }
 
+// The routes that wrap a fixed shape or a literal in a leading or trailing boundary test it with the
+// program's word-ness: a boundary a scoped `(?a:...)` flips must keep them off, in search as in a match.
+TEST(scoped_ascii_word_boundary_on_the_fast_paths)
+{
+  const std::string e_x {"\xC3\xA9x"};
+  EXPECT(!real::regex(R"((?a:\B)[0-9A-Za-z_])").search(e_x));
+  EXPECT(real::regex(R"((?a:\b)[0-9A-Za-z_])").search(e_x));
+  EXPECT(!real::regex(R"((?a:\B)(?:x|y))").search(e_x));
+  EXPECT(!real::regex(R"((?a:\B)x)").search(e_x));
+  const std::string x_e {"x\xC3\xA9"};
+  EXPECT(!real::regex(R"([0-9A-Za-z_](?a:\B))").search(x_e));
+  EXPECT(real::regex(R"([0-9A-Za-z_](?a:\b))").search(x_e));
+  EXPECT(!real::regex(R"(x(?a:\B))").search(x_e));
+  EXPECT(!real::regex(R"((?a:\B)xy+z)").search("\xC3\xA9xyyz"));
+  // And the other way round: a Unicode island in an ASCII program.
+  EXPECT(real::regex(R"((?-a:\B)x)", real::flags::ascii).search(e_x));
+}
+
 TEST(global_flags_prefix_removal_re2_parity)
 {
   // (?i-s) at the very start: RE2 syntax for "enable i, disable s" from here on (RE2 parity,

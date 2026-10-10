@@ -83,7 +83,11 @@ namespace {
         case 6:
           return "." + quantifier();
         case 7:
-          return below(2) != 0 ? "\\b" : "\\s";
+          {
+            // A boundary under a scoped `(?a:...)` reads ASCII word-ness where the program reads Unicode's.
+            static const char* const boundaries[] {"\\b", "\\s", "\\B", "(?a:\\b)", "(?a:\\B)"};
+            return boundaries[below(5)];
+          }
         case 8:
           return (below(2) != 0 ? std::string {"x"} : std::string {"\xC3\xA9"}) + quantifier();
         case 9:

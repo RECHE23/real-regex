@@ -358,7 +358,7 @@ namespace real::detail {
       prog.hints.bounded_backtrack = static_cast<std::uint8_t>(prog.lookarounds.empty()
                                                                && prog.slot_count <= bounded_backtrack_max_slots);
       // The required inner literal and its prefix boundary go to the hints only, never into the code.
-      const inner_literal il {extract_inner_literal(tree_)};
+      const inner_literal il {extract_inner_literal(tree_, flags_)};
       prog.hints.inner_literal             = il.bytes;
       prog.hints.inner_literal_len         = il.len;
       if (il.len >= 2) {
