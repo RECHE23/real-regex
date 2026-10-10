@@ -92,10 +92,9 @@ namespace real::detail {
                                              ranges.push_back({.lo = p, .hi = p});        // non-ASCII partner (coalesced below)
                                            }
                                          }};
-    const char_class&              cased_ascii  {in.has_sets ? in.cased_ascii : in.ascii};
     const std::vector<code_range>& cased_ranges {in.has_sets ? in.cased_ranges : in.ranges};
     for (std::uint32_t cp = 0; cp < 0x80U; ++cp) {
-      if (cased_ascii.test(static_cast<std::uint8_t>(cp))) {
+      if (in.ascii.test(static_cast<std::uint8_t>(cp))) {
         const std::size_t idx {find_fold_index(cp)};
         if (idx != unicode_fold_table_size) {
           const fold_entry& entry {unicode_fold_table[idx]};

@@ -103,9 +103,8 @@ namespace real::detail {
     char_class              ascii;                    //!< ASCII members as a bitmap (all 256 bytes in bytes mode); pre-negation.
     std::vector<code_range> ranges;                   //!< Non-ASCII code-point ranges (code-point mode only; empty otherwise).
     bool                    codepoint_predicate {};   //!< Emit as a match-time `klass_cp` (a Unicode shorthand `\w`/`\d`/`\s` in text mode), not the byte-NFA.
-    bool                    has_sets            {};   //!< A shorthand (`\w`, `\d`, `\s`, negated or not) is a member: a case fold expands only \ref cased_ascii and \ref cased_ranges.
-    char_class              cased_ascii;              //!< With \ref has_sets: the ASCII members a fold expands (characters, ranges, properties).
-    std::vector<code_range> cased_ranges;             //!< With \ref has_sets: the non-ASCII members a fold expands.
+    bool                    has_sets            {};   //!< A shorthand (`\w`, `\d`, `\s`, negated or not) is a member: a case fold expands only \ref cased_ranges past ASCII.
+    std::vector<code_range> cased_ranges;             //!< With \ref has_sets: the non-ASCII members a fold expands (characters, ranges, properties).
   };
 
   /*!
@@ -2545,17 +2544,16 @@ namespace real::detail {
       std::vector<code_range> ranges;              // non-ASCII members (code-point mode); empty in bytes/ASCII-only classes
       bool                    property_derived {}; // a \w/\d/\s (text mode) contributed -> emit as klass_cp
       bool                    first            {true};
-      // The members a case fold expands: characters, ranges and properties. A shorthand stays as it is
-      // (`(?i)[^\W]` is `\w`, as in `re`, though U+0345 in `\W` folds to iota).
+      // The non-ASCII members a case fold expands: characters, ranges and properties. A shorthand stays as
+      // it is (`(?i)[^\W]` is `\w`, as in `re`, though U+0345 in `\W` folds to iota). Its ASCII part
+      // needs no such care: no ASCII member of a shorthand has a fold partner outside it.
       bool                    has_sets {};
-      char_class              cased_klass;
       std::vector<code_range> cased_ranges;
       // Bytes mode: a member >= 0x80 is a raw byte in the bitmap, so a bytes class is byte-for-byte a
       // std::basic_regex<char> class (the compat layer relies on it). Code-point mode: a one-point range.
       const auto add_cp {[&](std::int32_t cp) {
                            if (bytes_ || cp < 0x80) {
                              klass.set(static_cast<std::uint8_t>(cp));
-                             cased_klass.set(static_cast<std::uint8_t>(cp));
                            }
                            else {
                              ranges.push_back({static_cast<std::uint32_t>(cp), static_cast<std::uint32_t>(cp)});
@@ -2567,11 +2565,9 @@ namespace real::detail {
       const auto add_range {[&](std::int32_t lo, std::int32_t hi) {
                               if (bytes_) {
                                 klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
-                                cased_klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi));
                               }
                               else if (lo < 0x80) {
                                 klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi < 0x80 ? hi : 0x7F));
-                                cased_klass.set_range(static_cast<std::uint8_t>(lo), static_cast<std::uint8_t>(hi < 0x80 ? hi : 0x7F));
                                 if (hi >= 0x80) {
                                   ranges.push_back({0x80U, static_cast<std::uint32_t>(hi)});
                                   cased_ranges.push_back(ranges.back());
@@ -2605,7 +2601,6 @@ namespace real::detail {
           std::vector<code_range> item_ranges;
           static_cast<void>(parse_class_item(item_klass, item_ranges, property_derived));
           klass.merge(item_klass);
-          cased_klass.merge(item_klass);
           ranges.insert(ranges.end(), item_ranges.begin(), item_ranges.end());
           cased_ranges.insert(cased_ranges.end(), item_ranges.begin(), item_ranges.end());
         }
@@ -2645,7 +2640,6 @@ namespace real::detail {
                              .ranges              = std::move(ranges),
                              .codepoint_predicate = property_derived,
                              .has_sets            = has_sets,
-                             .cased_ascii         = cased_klass,
                              .cased_ranges        = std::move(cased_ranges)},
                             negated);
     }
