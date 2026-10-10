@@ -87,9 +87,9 @@ namespace real {
   struct dfa_munch
   {
     std::optional<dfa_match> match; //!< The winning rule and length, as \ref dfa::match answers.
-    //! False once the walk died within the subject: no text appended after it can change \ref match. True
-    //! when the walk was still alive at the subject's end, or stopped where a memo proved no accept follows
-    //! (proven for this subject, not for a longer one).
+    //! False once the walk died within the subject, or the memo stopped it on a stretch walked to a death: no
+    //! text appended after the subject can change \ref match. True when the walk was still alive at the
+    //! subject's end, or the memo stopped it on a stretch proven dead for this subject only.
     bool more_text_may_change;
   };
 
@@ -979,11 +979,12 @@ namespace real {
 
     friend class dfa;
 
-    std::size_t                                        size_;                  //!< The subject's length.
-    std::vector<std::vector<bool>>                     dead_after_;            //!< [state][position]: no accept follows.
-    std::vector<std::uint8_t>                          marked_;                //!< [state]: dead_after_[state] holds a mark.
-    std::size_t                                        transitions_ {0};       //!< See transitions().
-    const void        *                                owner_       {nullptr}; //!< The dfa's tables this memo describes.
+    std::size_t                                        size_;                            //!< The subject's length.
+    std::vector<std::vector<bool>>                     dead_after_;                      //!< [state][position]: no accept follows.
+    std::vector<std::uint8_t>                          marked_;                          //!< [state]: dead_after_[state] holds a mark.
+    bool                                               marks_from_open_walks_ {};        //!< A mark came from a walk alive at the subject's end: dead for this subject only.
+    std::size_t                                        transitions_           {0};       //!< See transitions().
+    const void        *                                owner_                 {nullptr}; //!< The dfa's tables this memo describes.
   };
 
   /*!
@@ -1066,7 +1067,8 @@ namespace real {
      *        munch only when it could not.
      *
      * The walk is the same; telling costs nothing more. A walk that died within the subject proves the
-     * answer final, whatever follows. One alive at the subject's end, or stopped by the memo, may not be.
+     * answer final, whatever follows; so does one the memo stopped, while every stretch it marked was
+     * walked to a death. One alive at the subject's end may not be final.
      *
      * \param[in]     subject The text so far; every call with \p memo must pass the same one.
      * \param[in]     offset  Where this munch starts (at most `subject.size()`).
@@ -1079,7 +1081,11 @@ namespace real {
                                   dfa_munch_memo&  memo) const
     {
       const walk_end w {memo_walk(subject, offset, memo)};
-      return dfa_munch {.match = answer(w, offset), .more_text_may_change = !w.died};
+      // Stopped short of the end without dying, the walk met a mark: final when every mark came from a walk
+      // that died (no accept follows such a pair, whatever comes after), not when one was alive at the end.
+      const bool stopped_on_a_mark {!w.died && w.stop < subject.size()};
+      const bool final_answer {w.died || (stopped_on_a_mark && !memo.marks_from_open_walks_)};
+      return dfa_munch {.match = answer(w, offset), .more_text_may_change = !final_answer};
     }
 
     /*!
@@ -1293,6 +1299,7 @@ namespace real {
       const walk_end w {walk<false>(subject, offset, nullptr)};
       if (w.stop - w.best_end > dfa_munch_memo::short_stretch) [[unlikely]] {
         mark_dead_stretch(subject, state_at(subject, offset, w.best_end), w.best_end, w.stop, memo);
+        memo.marks_from_open_walks_ = memo.marks_from_open_walks_ || !w.died;
       }
       memo.transitions_ += w.stop - offset;
       return w;
@@ -1394,6 +1401,7 @@ namespace real {
       const walk_end w {walk<true>(subject, offset, &memo)};
       if (w.stop - w.best_end > dfa_munch_memo::short_stretch) {
         mark_dead_stretch(subject, w.resume, w.best_end, w.stop, memo);
+        memo.marks_from_open_walks_ = memo.marks_from_open_walks_ || !w.died;
       }
       memo.transitions_ += w.stop - offset;
       return w;
