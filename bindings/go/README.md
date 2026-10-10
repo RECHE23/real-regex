@@ -31,7 +31,13 @@ directions by `TestFlavorDivergence_ThreeSilentSyntaxReadings`.
 | `[[:alpha:]]`, `[[:digit:]]` | a POSIX class | the class `[[:alph]` — members `[ : a l p h` — followed by a literal `]`, which is `re`'s reading, so it matches `a]` and not `a` |
 | `\<w\>` | an escaped literal `<w>` | word-start / word-end anchors, a REAL extension |
 
-All five have one root, and it is worth stating plainly: **the API here is `regexp`'s, the engine is
+**And a sixth, rarer: a loop whose body can match the empty string** (`(?:a?|b)+`, `(?:\s*|,)+`). Both
+engines build such a loop the same way and agree on the common shapes, but they resolve an iteration that
+matches nothing differently on some patterns, so the span (or a group) can differ. Write the body so no
+iteration can match nothing (`(?:a|b)*` rather than `(?:a?|b)*`) and the answers agree; the exact rule is in
+the [divergences page](https://reche23.github.io/real-regex/differences-from-re.html#div-empty-first-branch-loop).
+
+All six have one root, and it is worth stating plainly: **the API here is `regexp`'s, the engine is
 Python `re`'s.** Where the two flavors disagree about text they both accept, this package follows
 `re`. That is the design, not an oversight — it is why these differences exist at all, and why the
 list is a list rather than a bug report.
@@ -46,11 +52,11 @@ all about syntax a corpus does not contain — which is exactly how the three ab
 ## Why this exists (beyond another `regexp`)
 
 REAL **compiles** every pattern `regexp` compiles (differential-tested against the stdlib, see
-`TestDifferential_*`), and matches identically **except for the five flavor differences listed
+`TestDifferential_*`), and matches identically **except for the six flavor differences listed
 above**. That qualifier is load-bearing, and this sentence used to omit it.
 
 On top of that, REAL accepts constructs `regexp` rejects outright at compile time. These are a
-different thing from the five above, which are about text both engines accept — here `regexp.Compile`
+different thing from the six above, which are about text both engines accept — here `regexp.Compile`
 returns an error and this package does not. **This list is open and deliberately carries no count**;
 among them:
 
@@ -64,7 +70,7 @@ among them:
   operator` there.
 
 The count is left open on purpose: a closed one invites the same correction the flavor list needed,
-and nothing here depends on the total. The **five** flavor differences above are a closed list,
+and nothing here depends on the total. The **six** flavor differences above are a closed list,
 because each is a case where both engines compile and only one can be right about the match.
 
 A `regexp` user migrates without rewriting existing patterns, then gains access to constructs they

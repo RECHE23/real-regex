@@ -163,38 +163,39 @@ patterns to a backtracking fallback. Pinned, both values, in `TestIntentionalDiv
 side is guarded by the exhaustive-compat gate's exact-signature discriminator.
 
 (div_empty_first_branch_loop)=
-## Span of an empty-first-branch loop under a forced-non-empty retry
+## Span of a loop whose body can match the empty string
 
-**The rule.** An unbounded `*`/`+` loop whose body's **first** alternative is empty and a later one
-consumes (`(|a)*`, `(|a)+`) has, under a **forced-non-empty** match — the step `finditer` / `sub` take at a
-position where the whole match would otherwise be empty — a different **span** in `re` and REAL. `re` exits
-the loop through the empty branch after the first consuming iteration (the shortest non-empty match); REAL
-consumes maximally. On `"aa"`:
+**The rule.** An unbounded `*`/`+` loop whose body can match the empty string — an empty or optional
+alternative, `(|a)*`, `(?:a?|b)+` — can end with a different **span** in `re` and REAL. `re` ends the loop
+on **every** iteration that matches nothing. REAL runs a loop as a Thompson `split → body → back edge`, one
+thread per instruction and position: a path that comes back, without consuming, to an instruction already
+reached at that position is dropped (that is how an empty iteration cannot loop forever), except a jump back
+to the loop's head, which takes the loop's exit. So an iteration that matches nothing ends the loop when
+nothing else of the body was reached at that position before it, and is dropped otherwise, leaving the
+body's later alternatives free to consume:
 
-| Pattern | `re` finditer | REAL finditer |
-| --- | --- | --- |
-| `(\|a)*` | `(0,0)(0,1)(1,1)(1,2)(2,2)` | `(0,0)(0,2)(2,2)` |
-| `(\|a)+` | same as `*` | `(0,0)(0,2)(2,2)` |
-| `(a\|\|b)*` on `"ab"` | `(0,1)(1,1)(1,2)(2,2)` | `(0,2)(2,2)` |
+| Pattern | Subject | `re` | REAL |
+| --- | --- | --- | --- |
+| `(?:a?\|b)*` | `"b"` | search `(0,0)` | search `(0,0)` |
+| `(?:a?\|b)+` | `"ab"` | search `(0,1)` | search `(0,2)` |
+| `(?:\s*\|,)+` | `"  ,  ,x"` | search `(0,2)` | search `(0,6)` |
+| `(a\|\|b)*` | `"ab"` | finditer `(0,1)(1,1)(1,2)(2,2)` | finditer `(0,2)(2,2)` |
+| `(\|a)*`, `(\|a)+` | `"aa"` | finditer `(0,0)(0,1)(1,1)(1,2)(2,2)` | finditer `(0,0)(0,2)(2,2)` |
 
-**Green witnesses (parity).** `search` / `match` / `fullmatch` agree for these patterns — the divergence is
-**only** the forced-non-empty retry. An empty-**last** branch `(a\|)*` agrees (its empty branch is the loop's
-natural secondary exit, not a deduped back-edge). The **bounded** forms `(\|a){2}`, `(\|a){1,3}` agree
-(unrolled, no back-edge). This is distinct from {ref}`div_empty_iteration_capture`, where the match spans are
-identical and only a group **capture** differs.
+`search`, `match` and `fullmatch` can differ, not only the forced-non-empty step of `finditer` / `sub`. An
+empty **last** branch `(a\|)*` agrees (its empty branch is the loop's own exit), and so do the **bounded**
+forms `(\|a){2}`, `(\|a){1,3}` (unrolled, no back edge). RE2 and Go build loops the same way and agree with
+REAL on these examples, though not on every pattern of the family; the `regex` crate does a third thing
+(`(\|a)*` on `"aa"`: `(0,0)(1,1)(2,2)`), so **`re` is the arbiter, never the crate**. This is distinct from
+{ref}`div_empty_iteration_capture`, where the match spans are identical and only a group **capture** differs.
 
-**The mechanism, both sides.** In REAL's star loop (Thompson `split → body → jump-back`), an empty-first
-body makes the jump-back land at the **same position**; REAL's per-position thread dedup — which is *how* it
-guards against an infinite empty loop — removes that empty back-edge, so the greedy loop falls through to
-consuming. `re`, a backtracker, takes the empty iteration as a loop exit (the empty branch's exit
-preference). The `regex` crate does a **third** thing (all-empty: `(0,0)(1,1)(2,2)`), so **`re` is the
-arbiter, never the crate** (the crate's own bugs on this family are in the Rust binding's known-bugs).
+**Portable form.** Write the body so that no iteration can match nothing — `(?:a|b)*` rather than
+`(?:a?|b)*`, `(?:\s+|,)*` rather than `(?:\s*|,)+` — and every engine gives the same answer.
 
-**When to revisit.** A fix would have to distinguish an empty iteration that should **exit** the loop from
-one that should be **deduped**, at `re`'s exact priority, under the runtime forbid-empty flag — a change to
-the star-loop termination that underlies *every* quantifier. Judged not worth it for a class this rare and
-this constrained (the forced-non-empty retry only; `search`/`match` in parity); a weighed choice, not an
-oversight. Pinned in `TestIntentionalDivergences`.
+**When to revisit.** Ending the loop on every empty iteration, as `re` does, needs each path of a closure to
+know which iterations it began at this position: one more field in every frame of the Pike closure, the
+engine's hottest loop, charged to every pattern for a class this rare. Weighed on 2026-10-10 and left as is;
+pinned in `TestIntentionalDivergences` and in the C++ suite.
 
 (div_rejected)=
 ## Rejected by design

@@ -1145,26 +1145,34 @@ class TestIntentionalDivergences(unittest.TestCase):
                                  re.search(pattern, subject).span(1))
 
     def test_empty_first_branch_loop_span_forced_non_empty(self):
-        r"""An unbounded */+ loop whose body's FIRST alternative is empty and a later one consumes
-        ((|a)*): under a forced-non-empty retry (finditer/sub), re exits the loop through the empty
-        branch (shortest non-empty match) while REAL consumes maximally. Only the finditer span sequence
-        differs -- search/match/fullmatch, and the empty-LAST and bounded forms, are in parity.
-        Double-pinned (both sequences). See the div_empty_first_branch_loop divergences section; the
-        regex crate does a third thing, so re is the arbiter, never the crate."""
+        r"""An unbounded */+ loop whose body can match the empty string: re ends the loop on every empty
+        iteration; REAL drops an empty iteration that comes back to an instruction already reached at that
+        position, so a later alternative of the body may still consume. search can differ as well as the
+        forced-non-empty step of finditer/sub; the empty-LAST and bounded forms are in parity. Double-pinned
+        (both answers). See the div_empty_first_branch_loop divergences section; the regex crate does a
+        third thing, so re is the arbiter, never the crate."""
         diverging = [
             (r"(|a)*", "aa", [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)], [(0, 0), (0, 2), (2, 2)]),
             (r"(|a)+", "aa", [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)], [(0, 0), (0, 2), (2, 2)]),
             (r"(a||b)*", "ab", [(0, 1), (1, 1), (1, 2), (2, 2)], [(0, 2), (2, 2)]),
+            (r"(?:a?|b)+", "ab", [(0, 1), (1, 1), (1, 2), (2, 2)], [(0, 2), (2, 2)]),
         ]
         for pattern, subject, re_spans, real_spans in diverging:
             with self.subTest(pattern=pattern, kind="diverges"):
                 self.assertEqual([m.span() for m in re.finditer(pattern, subject)], re_spans)
                 self.assertEqual([m.span() for m in real.finditer(pattern, subject)], real_spans)
-        # Green witnesses: single-match is in parity, and the empty-LAST + bounded forms agree fully.
-        for pattern, subject in [(r"(|a)*", "aa"), (r"(|a)+", "aa")]:
+        # search too, where the empty iteration follows one that consumed.
+        for pattern, subject, re_span, real_span in [(r"(?:a?|b)+", "ab", (0, 1), (0, 2)),
+                                                     (r"(?:\s*|,)+", "  ,  ,x", (0, 2), (0, 6))]:
+            with self.subTest(pattern=pattern, kind="search-diverges"):
+                self.assertEqual(re.search(pattern, subject).span(), re_span)
+                self.assertEqual(real.search(pattern, subject).span(), real_span)
+        # Green witnesses: an empty first iteration ends the loop in both, and the empty-LAST, bounded and
+        # never-empty forms agree fully.
+        for pattern, subject in [(r"(|a)*", "aa"), (r"(|a)+", "aa"), (r"(?:a?|b)*", "b")]:
             with self.subTest(pattern=pattern, kind="single-match-parity"):
                 self.assertEqual(real.search(pattern, subject).span(), re.search(pattern, subject).span())
-        for pattern, subject in [(r"(a|)*", "aa"), (r"(|a){2}", "aa"), (r"(|a){1,3}", "aa")]:
+        for pattern, subject in [(r"(a|)*", "aa"), (r"(|a){2}", "aa"), (r"(|a){1,3}", "aa"), (r"(?:a|b)*", "ab")]:
             with self.subTest(pattern=pattern, kind="parity"):
                 self.assertEqual([m.span() for m in real.finditer(pattern, subject)],
                                  [m.span() for m in re.finditer(pattern, subject)])
