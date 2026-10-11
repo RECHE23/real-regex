@@ -1064,6 +1064,11 @@ namespace real {
         // The compiler gets `effective` (additions only): the parser already applied any `(?-flags)` removal
         // to its scopes. What is reported is the set in force.
         dynamic_program prog {detail::compile(tree, effective)};
+        // This storage has the lazy DFA, which takes a fixed shape the walk would verify too deep.
+        if (!std::is_constant_evaluated() && prog.hints.fixed_shape
+            && !detail::fixed_shape_walk_pays(prog.code, prog.hints)) {
+          prog.hints.fixed_shape = false;
+        }
         // The fixed-shape seam is applied here, once per regex, not in run()'s gate: that route enters
         // `run()` once per match, so a gate test is paid per match. `fs_pair_width` goes with it.
         // The aggregate return is required: dynamic_storage's own constructor is not constexpr, and

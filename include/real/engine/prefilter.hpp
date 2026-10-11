@@ -1961,6 +1961,38 @@ namespace real::detail {
     return hints;
   }
 
+  inline constexpr std::size_t fixed_shape_walk_max_width {8}; //!< Widest unfiltered shape kept on the walk.
+
+  /*!
+   * \brief Whether a search over this fixed shape (\ref pattern_hints::fixed_shape) should walk each candidate
+   *        start rather than run the lazy DFA.
+   *
+   * The walk verifies a candidate up to the shape's width, so a subject whose starts match far into the shape
+   * costs it width x length: `[a-z]{300}[0-9]` over letters, 270 ms/MiB against the DFA's 2 (arm64). A filter
+   * that skips starts bounds that: the fused scan (\ref pattern_hints::fixed_shape_simd_len), the pair filter,
+   * a rare byte at a fixed offset, a single first byte, or a start anchor (one candidate). Without one, the
+   * walk holds its own up to \ref fixed_shape_walk_max_width; past it the DFA's one pass wins on prose and
+   * identifiers by 2x to 28x, and loses only where nearly every start matches, by a bounded ~0.6 ms/MiB.
+   * \param[in] code  The program, a fixed shape.
+   * \param[in] hints Its hints.
+   * \return True when the walk is the better route.
+   */
+  constexpr bool fixed_shape_walk_pays(std::span<const instr> code,
+                                       const pattern_hints&   hints) noexcept
+  {
+    if (hints.fixed_shape_simd_len != 0 || hints.fs_pair_width >= 2 || hints.rare_byte >= 0
+        || hints.single_first >= 0 || hints.anchored_start) {
+      return true;
+    }
+    std::size_t width {0};
+    for (const instr& in : code) {
+      if (in.op == opcode::byte || in.op == opcode::klass) {
+        ++width;
+      }
+    }
+    return width <= fixed_shape_walk_max_width;
+  }
+
 #if defined(__ARM_NEON)
   /*!
    * \brief The single-byte scan behind \ref find_byte on NEON: 64 bytes per round, rejected by one test on

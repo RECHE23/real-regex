@@ -1462,6 +1462,64 @@ TEST(fixed_shape_batches_answer_as_the_per_match_walk)
   EXPECT_EQ(real::detail::tally(real::detail::counter::fixed_shape_batches).load(), 0U);
 }
 
+// A fixed shape with nothing to skip starts by verifies each start up to its width: past
+// fixed_shape_walk_max_width a dynamic regex runs the lazy DFA instead (it takes a lease). The fused scan, the
+// pair filter, a rare byte, a single first byte, a start anchor and the width bound each keep the walk (no
+// lease). The answers, groups included, are the static regex's, which has no lazy DFA and keeps the walk.
+TEST(a_wide_fixed_shape_with_nothing_to_skip_by_takes_the_lazy_dfa)
+{
+  std::string subject(5000, 'q');
+  for (std::size_t i {36}; i < subject.size(); i += 37) {
+    subject[i] = 'x';
+  }
+  const auto leases = [&subject](const char* pattern, bool matches) {
+                        const real::regex re {pattern};
+                        real::detail::tally(real::detail::counter::dfa_leases_taken) = 0;
+                        EXPECT_EQ(re.search(subject).matched(), matches);
+                        return real::detail::tally(real::detail::counter::dfa_leases_taken).load();
+                      };
+  EXPECT(leases("[a-z0-9_]{9}", true) > 0U);
+  EXPECT(leases("\\b[a-z0-9_]{12}\\b", false) > 0U);
+  EXPECT(leases("([a-z]{20})([0-9]{20})", false) > 0U);
+  EXPECT_EQ(leases("[a-z0-9_]{8}", true), 0U);    // the width bound
+  EXPECT_EQ(leases("[0-9a-f]{12}", false), 0U);   // the fused scan
+  EXPECT_EQ(leases("[a-z]{11}[0-9]", false), 0U); // the pair filter
+  EXPECT_EQ(leases("[a-z]{40}x", true), 0U);      // a rare byte
+  EXPECT_EQ(leases("e[a-z0-9_]{20}", false), 0U); // a single first byte
+  EXPECT_EQ(leases("^[a-z0-9_]{20}", true), 0U);  // a start anchor
+  // The pair route sits above the DFA whatever the hint says, but its width is never read without the shape:
+  // a paired shape with a common inner literal keeps both.
+  const real::detail::pattern_hints paired {hints_of("[a-z]{4}e[a-z]{5}")};
+  EXPECT(paired.fs_pair_width == 0 || paired.fixed_shape);
+
+  std::string text;
+  for (int i {0}; i < 300; ++i) {
+    text += "alpha_" + std::to_string(i * 7919) + " abcdefghijklmnopqrst" + std::to_string(10000000 + i)
+            + "123456789012 x" + std::string(static_cast<std::size_t>(i % 13), 'z') + ' ';
+  }
+  const auto compare = [&text]<typename Static>(const Static& stat, const char* pattern, std::size_t groups) {
+                         const real::regex                                re {pattern};
+                         std::vector<std::pair<std::size_t, std::size_t>> from_static;
+                         std::vector<std::pair<std::size_t, std::size_t>> from_dynamic;
+                         for (const auto& m : stat.find_iter(text)) {
+                           for (std::size_t g {0}; g <= groups; ++g) {
+                             from_static.emplace_back(m.start(g), m.end(g));
+                           }
+                         }
+                         for (const auto& m : re.find_iter(text)) {
+                           for (std::size_t g {0}; g <= groups; ++g) {
+                             from_dynamic.emplace_back(m.start(g), m.end(g));
+                           }
+                         }
+                         EXPECT(!from_static.empty());
+                         EXPECT(from_static == from_dynamic);
+                       };
+  compare(real::static_regex<"[a-z0-9_]{9}"> {}, "[a-z0-9_]{9}", 0);
+  compare(real::static_regex<"\\b[a-z0-9_]{12}\\b"> {}, "\\b[a-z0-9_]{12}\\b", 0);
+  compare(real::static_regex<"([a-z]{20})([0-9]{20})"> {}, "([a-z]{20})([0-9]{20})", 2);
+  compare(real::static_regex<"[a-z_]{5}[0-9]{7}"> {}, "[a-z_]{5}[0-9]{7}", 0);
+}
+
 // Twelve branches reach the Aho-Corasick gate, whose candidate density is the first bytes': on a subject where
 // they are dense it chose the automaton, calibrated against the first-byte scan. The filtered block scan beats
 // the automaton there, so a subject the alternation's filter takes stays on the alternation -- same answers.
