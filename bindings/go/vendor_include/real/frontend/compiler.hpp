@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "real/frontend/ast.hpp"
@@ -517,10 +518,10 @@ namespace real::detail {
             ok = false; // a split, jump, assertion or lookaround: not a fixed sequence
           }
         }
-        if (ok && hit_literal && cps > 0 && cps <= 255 && pc < prog.code.size()
+        if (ok && hit_literal && cps > 0 && cps <= std::numeric_limits<std::uint16_t>::max() && pc < prog.code.size()
             && prog.code[pc].op == opcode::match) {
           prog.hints.il_cp_shape_eligible = true;
-          prog.hints.il_cp_prefix_cps     = static_cast<std::uint8_t>(cps);
+          prog.hints.il_cp_prefix_cps     = static_cast<std::uint16_t>(cps);
         }
       }
       // Read off the AST (the program loses the group-under-quantifier structure). The compat layer

@@ -614,8 +614,8 @@ namespace real {
        *        but the code-point count is: step \ref il_cp_prefix_cps code points back from the literal,
        *        then one forward walk verifies and fills every capture.
        */
-      bool         il_cp_shape_eligible {};
-      std::uint8_t il_cp_prefix_cps     {}; //!< Code points before the literal in \ref il_cp_shape_eligible.
+      bool          il_cp_shape_eligible {};
+      std::uint16_t il_cp_prefix_cps     {}; //!< Code points before the literal in \ref il_cp_shape_eligible.
 
       /*!
        * \brief Upper bound, in code points, on \ref greedy_cp_class's run, or 0 for unbounded (`\w+`,

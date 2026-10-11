@@ -359,6 +359,58 @@ TEST(inner_literal_fixed_codepoint_shape_fires_on_exactly_the_loopless_sequences
   EXPECT(!shape("dog").first);              // literal at the head, no prefix to step back over
 }
 
+// A wide shape keeps the route: past 255 code points it fell to the Pike VM, a few hundred threads per byte
+// (`\w{300}x` on Unicode text ran 20 times slower than `\w{255}x`), since no byte DFA holds that many
+// multi-byte members. The count is exact at and across each width a narrower field would wrap at.
+TEST(inner_literal_fixed_codepoint_shape_counts_past_255_code_points)
+{
+  const auto shape {[](const std::string& pattern) {
+                      const real::detail::ast tree {real::detail::parse(pattern, real::flags::none)};
+                      const auto              prog {real::detail::compile(tree, real::flags::none | tree.inline_flags)};
+                      return std::pair<bool, unsigned> {prog.hints.il_cp_shape_eligible,
+                                                        static_cast<unsigned>(prog.hints.il_cp_prefix_cps)};
+                    }};
+  for (const unsigned width : {254U, 255U, 256U, 257U, 300U, 511U, 512U, 1000U}) {
+    const auto [eligible, count] {shape(R"(\w{)" + std::to_string(width) + "}x")};
+    EXPECT(eligible);
+    EXPECT_EQ(count, width);
+  }
+}
+
+TEST(inner_literal_wide_fixed_codepoint_shape_matches_the_core)
+{
+  // At the widths around 255 and 256, on subjects one code point short of a match, exactly long enough, and
+  // longer (so the step back lands inside a run), multi-byte and ASCII.
+  for (const unsigned width : {255U, 256U, 257U}) {
+    const real::regex re {R"((\w{)" + std::to_string(width) + R"(})x)"};
+    for (const unsigned run : {width - 1, width, width + 1, (2 * width) + 3}) {
+      for (const std::string_view unit : {std::string_view {"\xC3\xA9"}, std::string_view {"a"}}) {
+        std::string text;
+        for (unsigned i {0}; i < run; ++i) {
+          text += unit;
+        }
+        text += "x ";
+        text += text;
+        const auto collect {[&] {
+                              std::vector<std::pair<std::size_t, std::size_t>> all;
+                              for (const auto& m : re.find_iter(text)) {
+                                all.emplace_back(m.start(0), m.end(0));
+                                all.emplace_back(m.start(1), m.end(1));
+                              }
+                              return all;
+                            }};
+        real::detail::inner_literal_route_disabled() = false;
+        const auto routed {collect()};
+        real::detail::inner_literal_route_disabled() = true;
+        const auto core   {collect()};
+        real::detail::inner_literal_route_disabled() = false;
+        EXPECT(routed == core);
+        EXPECT_EQ(routed.size(), run >= width ? 4U : 0U);
+      }
+    }
+  }
+}
+
 TEST(inner_literal_fixed_codepoint_shape_matches_the_core)
 {
   // Differential against the same engine with the route off, on the shapes the walk now serves and at the

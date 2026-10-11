@@ -1474,7 +1474,7 @@ namespace real::detail {
         else if (boundary >= 1 && prog_.hints.il_cp_shape_eligible) {
           // Fixed code-point shape: the start is exactly `il_cp_prefix_cps` code points back; the forward
           // walk below decides.
-          for (std::uint8_t k {0}; k < prog_.hints.il_cp_prefix_cps && s != npos; ++k) {
+          for (std::uint16_t k {0}; k < prog_.hints.il_cp_prefix_cps && s != npos; ++k) {
             if (s <= min_match_start) {
               s = npos; // the shape does not fit between the floor and this candidate
               break;
