@@ -1479,14 +1479,9 @@ namespace real {
 
   /*!
    * \brief The default search budget of \ref real::dfa_faithful, in product states: the same cap a
-   *        \ref dfa's own construction runs under.
+   *        \ref dfa's own construction runs under, 65 536 unless the build lowers it (`REAL_MAX_DFA_STATES`).
    */
-  inline constexpr std::size_t dfa_default_state_budget {65536};
-
-  // Spelled as a literal so the published signature names no internal; bound to the construction cap here
-  // so the two cannot drift apart.
-  static_assert(dfa_default_state_budget == detail::max_dfa_states,
-                "dfa_faithful's default budget must be the cap real::dfa's construction runs under");
+  inline constexpr std::size_t dfa_default_state_budget {detail::max_dfa_states};
 
   /*!
    * \brief The three answers \ref real::dfa_faithful can give.

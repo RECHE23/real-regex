@@ -230,3 +230,26 @@ endif()
 # $<TARGET_FILE:...> resolves the per-config output path on multi-config
 # generators (Visual Studio, Xcode).
 add_test(NAME run_tests COMMAND $<TARGET_FILE:real_tests_bin>)
+
+# Every resource limit lowered below its default (core/config.hpp), in a program of its own: the limits are
+# per program, so the main suite keeps the defaults and this one checks that a lowered limit is enforced.
+add_executable(real_limits_bin tests_limits/test_lowered_limits.cpp)
+target_link_libraries(real_limits_bin PRIVATE real::real)
+target_include_directories(real_limits_bin PRIVATE "${SCIFORGE_INCLUDE_DIR}")
+target_compile_definitions(real_limits_bin PRIVATE
+    REAL_MAX_REPEAT_COUNT=10 REAL_MAX_GROUP_COUNT=5 REAL_MAX_NESTING_DEPTH=8 REAL_MAX_LOOKAROUND_LENGTH=4
+    REAL_MAX_PROGRAM_SIZE=256 REAL_MAX_DFA_STATES=16)
+set_target_properties(real_limits_bin PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+if(NOT MSVC)
+    target_compile_options(real_limits_bin PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME lowered_limits COMMAND $<TARGET_FILE:real_limits_bin>)
+if(NOT MSVC)
+    # Raising a limit above its default must not compile; the expression names the refusal, so a build that
+    # fails for any other reason does not pass.
+    add_test(NAME raised_limit_refused
+             COMMAND ${CMAKE_CXX_COMPILER} -std=c++20 -fsyntax-only -I${CMAKE_CURRENT_SOURCE_DIR}/include
+                     -DREAL_MAX_REPEAT_COUNT=5000 ${CMAKE_CURRENT_SOURCE_DIR}/tests_limits/raised_limit.cpp)
+    set_tests_properties(raised_limit_refused PROPERTIES
+                         PASS_REGULAR_EXPRESSION "REAL_MAX_REPEAT_COUNT may only lower the default")
+endif()

@@ -65,10 +65,12 @@ unless noted):
 
 **If you accept untrusted patterns** (not just untrusted input — e.g. a multi-tenant service where a
 tenant supplies the regex), the recommended posture: stay on `policy::strict` (`real::compat`'s default,
-which rejects a pattern REAL cannot run linearly rather than silently degrading); lower
-`max_lookaround_length` / `max_program_size` / `max_group_count` for your build (compile-time constants,
-`include/real/core/config.hpp`) to whatever your workload actually needs, well below the library
-defaults; and bound the haystack size upstream of the match call. There is no runtime kill-switch for
+which rejects a pattern REAL cannot run linearly rather than silently degrading); lower the limits for
+your build to whatever your workload actually needs, well below the library defaults, by defining
+`REAL_MAX_PROGRAM_SIZE`, `REAL_MAX_REPEAT_COUNT`, `REAL_MAX_GROUP_COUNT`, `REAL_MAX_NESTING_DEPTH`,
+`REAL_MAX_LOOKAROUND_LENGTH` or `REAL_MAX_DFA_STATES` (`-DREAL_MAX_REPEAT_COUNT=100`; a value above the
+default is refused at compile time, and every translation unit of a program must see the same values —
+`include/real/core/config.hpp`); and bound the haystack size upstream of the match call. There is no runtime kill-switch for
 match-time cost today (`prefilter_work_units` exists only as a test instrument) — the compile-time caps
 above are the current lever.
 

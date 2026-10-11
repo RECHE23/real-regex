@@ -1472,17 +1472,23 @@ namespace real::detail {
         throw regex_error("nested lookaround is not supported", 0, error_kind::unsupported);
       }
       const std::int32_t lmax {l_max_bytes(node.child)};
-      static_assert(max_lookaround_length == 255, "the two messages below name the bound");
+      // The messages name the default bound; a build that lowered it names its macro instead.
+      static_assert(default_max_lookaround_length == 255, "the messages below name the default bound");
+      constexpr bool lowered {max_lookaround_length != default_max_lookaround_length};
       if (lmax < 0 && node.direction == look_dir::behind) {
         // Name the rewrite (`.*` -> `.{0,N}`). The ceiling is in bytes and a UTF-8 `.` takes up to 4,
         // so the example stays well under it.
-        throw regex_error("unbounded lookbehind is not supported (bound the repetition, e.g. "
+        throw regex_error(lowered ? "unbounded lookbehind is not supported (bound the repetition; the sub-pattern "
+                          "must match at most this build's REAL_MAX_LOOKAROUND_LENGTH bytes)"
+                                  : "unbounded lookbehind is not supported (bound the repetition, e.g. "
                           ".* -> .{0,32}; the sub-pattern must match at most 255 bytes)",
                           0, error_kind::unsupported);
       }
       if (lmax > max_lookaround_length) {
         // Say the unit: bytes, two to four per non-ASCII character.
-        throw regex_error("lookaround sub-pattern too long (it may match at most 255 bytes; a non-ASCII "
+        throw regex_error(lowered ? "lookaround sub-pattern too long (it may match at most this build's "
+                          "REAL_MAX_LOOKAROUND_LENGTH bytes; a non-ASCII character takes up to 4)"
+                                  : "lookaround sub-pattern too long (it may match at most 255 bytes; a non-ASCII "
                           "character takes up to 4)",
                           0, error_kind::unsupported);
       }
