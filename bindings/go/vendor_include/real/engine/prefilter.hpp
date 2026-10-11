@@ -2815,6 +2815,62 @@ namespace real::detail {
   }
 
   /*!
+   * \brief The first occurrence at or after \p pos of a literal some of whose letters match in either case.
+   *
+   * Scans for the byte at offset \p rare -- both cases of it when it is such a letter, in one pass
+   * (\ref find_members) -- and checks the whole literal around each hit.
+   * \param[in] text   The subject.
+   * \param[in] pos    Index to start from.
+   * \param[in] lit    The literal, its case-free letters in lower case.
+   * \param[in] folded Bit `i`: byte `i` of \p lit is a letter that matches in either case.
+   * \param[in] rare   The offset of the byte to scan for (the literal's rarest).
+   * \return The index of the occurrence, else \ref real::npos.
+   */
+  inline std::size_t find_folded_literal(std::string_view text,
+                                         std::size_t      pos,
+                                         std::string_view lit,
+                                         std::uint16_t    folded,
+                                         std::size_t      rare)
+  {
+    const std::size_t len         {lit.size()};
+    const auto        is_folded   {[folded](std::size_t i) { return ((static_cast<unsigned>(folded) >> i) & 1U) != 0U; }};
+    const auto        matches_at  {[&](std::size_t at) {
+                                     for (std::size_t i {0}; i < len; ++i) {
+                                       const auto got  {static_cast<std::uint8_t>(text[at + i])};
+                                       const auto want {static_cast<std::uint8_t>(lit[i])};
+                                       // For a lower-case letter, `| 0x20` maps only its upper case onto it.
+                                       if (got != want && (!is_folded(i) || static_cast<std::uint8_t>(got | 0x20U) != want)) {
+                                         return false;
+                                       }
+                                     }
+                                     return true;
+                                   }};
+    const auto        key         {static_cast<std::uint8_t>(lit[rare])};
+    const auto        key_upper   {static_cast<std::uint8_t>(key - 0x20U)};
+    const bool        key_folded  {is_folded(rare)};
+    std::size_t       from        {pos + rare};
+    while (from < text.size()) {
+      std::size_t hit {npos};
+      if (key_folded) {
+        const std::array<std::uint8_t, 8> members {key, key_upper};
+        hit = find_members(text, from, members, 2U);
+      }
+      else {
+        const void* found {std::memchr(text.data() + from, key, text.size() - from)};
+        hit = found == nullptr ? npos : static_cast<std::size_t>(static_cast<const char*>(found) - text.data());
+      }
+      if (hit == npos || hit - rare + len > text.size()) {
+        return npos;
+      }
+      if (matches_at(hit - rare)) {
+        return hit - rare;
+      }
+      from = hit + 1;
+    }
+    return npos;
+  }
+
+  /*!
    * \brief Where an ECMAScript line ends: the index of the first `\n` or `\r` in `text[pos..)`, or \ref real::npos.
    * \param[in] text The subject.
    * \param[in] pos  Index to start scanning from.

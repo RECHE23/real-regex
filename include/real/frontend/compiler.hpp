@@ -358,15 +358,31 @@ namespace real::detail {
       prog.hints.bounded_backtrack = static_cast<std::uint8_t>(prog.lookarounds.empty()
                                                                && prog.slot_count <= bounded_backtrack_max_slots);
       // The required inner literal and its prefix boundary go to the hints only, never into the code.
-      const inner_literal il {extract_inner_literal(tree_)};
+      // A folded literal at the head arms no route -- the inner-literal route wants a prefix before it, and the
+      // head literal's search is exact -- while publishing it would take the pattern off the lazy DFA's batch.
+      inner_literal il {extract_inner_literal(tree_)};
+      if (il.folded != 0 && il.prefix_child_count < 1) {
+        il = inner_literal {};
+      }
       prog.hints.inner_literal             = il.bytes;
       prog.hints.inner_literal_len         = il.len;
+      prog.hints.inner_literal_fold        = il.folded;
       if (il.len >= 2) {
-        std::array<char, 16> chars {};
-        for (std::size_t k = 0; k < il.len; ++k) {
-          chars[k] = static_cast<char>(il.bytes[k]);
+        // The rarest position by the traffic it stops on: a letter in either case counts both.
+        const auto traffic {[&il](std::size_t k) {
+                              const auto          b   {il.bytes[k]};
+                              const std::uint32_t own {byte_frequency(b)};
+                              return ((static_cast<unsigned>(il.folded) >> k) & 1U) != 0U
+                                       ? own + static_cast<std::uint32_t>(byte_frequency(static_cast<std::uint8_t>(b - 0x20U)))
+                                       : own;
+                            }};
+        std::size_t rarest {0};
+        for (std::size_t k {1}; k < il.len; ++k) {
+          if (traffic(k) < traffic(rarest)) {
+            rarest = k;
+          }
         }
-        prog.hints.inner_literal_rare = literal_rarest_offset(std::string_view {chars.data(), il.len});
+        prog.hints.inner_literal_rare = static_cast<std::uint8_t>(rarest);
       }
       prog.hints.inner_literal_prefix      = il.prefix_child_count;
       // Peel-lead skip for the reverse prefix (build_prefix_ast), non-zero only when the IL route is live;

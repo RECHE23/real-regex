@@ -1352,7 +1352,10 @@ namespace real::detail {
       std::optional<dfa_lease> lease;
       const scan_set_reset     held {scan_set_};
       while (true) {
-        const std::size_t h {find_on_subject(text, pos, lit, prog_.hints.inner_literal_rare, true)};
+        const std::size_t h {prog_.hints.inner_literal_fold == 0
+                               ? find_on_subject(text, pos, lit, prog_.hints.inner_literal_rare, true)
+                               : find_folded_literal(text, pos, lit, prog_.hints.inner_literal_fold,
+                                                     prog_.hints.inner_literal_rare)};
         if (h != npos) {
           detail::prof::tick_prefilter_candidate();
         }

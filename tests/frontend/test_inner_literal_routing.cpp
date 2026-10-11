@@ -9,6 +9,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -510,3 +511,70 @@ TEST(il_scan_leases_its_dfas_once)
   EXPECT(leases <= 4U); // thousands of failed dots, a handful of leases
 }
 #endif
+
+// A letter that matches in either case and no other way joins the inner literal, its position flagged: under
+// `(?i)`, or written `[xX]`. In text mode `k` and `s` stay out -- their fold orbits hold the KELVIN SIGN and
+// LONG S, which a scan for two ASCII bytes would miss -- while `(?a)` and bytes mode fold them as ASCII.
+TEST(inner_literal_folds_a_letter_whose_orbit_is_its_two_cases)
+{
+  struct literal_hint
+  {
+    unsigned      inner_literal_len;
+    unsigned      inner_literal_fold;
+    std::uint8_t  first;
+    std::uint8_t  second;
+  };
+  const auto hints {[](const char* pattern, real::flags f = real::flags::none) {
+                      const real::regex                  re {pattern, f};
+                      const real::detail::pattern_hints& h {re.raw_program().hints};
+                      return literal_hint {.inner_literal_len = h.inner_literal_len, .inner_literal_fold = h.inner_literal_fold,
+                                           .first             = h.inner_literal[0], .second = h.inner_literal[1]};
+                    }};
+  const auto xy {hints("(?i)\\w+xy")};
+  EXPECT_EQ(xy.inner_literal_len, 2U);
+  EXPECT_EQ(xy.inner_literal_fold, 3U);
+  EXPECT(xy.first == 'x' && xy.second == 'y');
+  EXPECT_EQ(hints("\\w+[xX][yY]").inner_literal_fold, 3U);
+  EXPECT_EQ(hints("\\w+x[yY]").inner_literal_fold, 2U);             // only the second position folds
+  EXPECT_EQ(hints("\\w+[xy]").inner_literal_len, 0U);               // two letters: not one letter's cases
+  EXPECT_EQ(hints("\\w+[x]y").inner_literal_fold, 0U);              // `[x]` without (?i) matches x only
+  EXPECT_EQ(hints("(?i)\\w+k").inner_literal_len, 0U);              // KELVIN SIGN is in k's orbit
+  EXPECT_EQ(hints("(?i)\\w+s").inner_literal_len, 0U);              // so is LONG S in s's
+  EXPECT_EQ(hints("(?ia)\\w+k").inner_literal_fold, 1U);            // ASCII-only fold
+  EXPECT_EQ(hints("(?i)\\w+k", real::flags::bytes).inner_literal_fold, 1U);
+  // At the head a folded literal arms no route, and publishing it would cost the lazy DFA's batched walk
+  // (`(?i)jumps` over dense matches: +28 %); an inner one is kept.
+  EXPECT_EQ(hints("(?i)jumps").inner_literal_len, 0U);
+  EXPECT_EQ(hints("(?i)caf\\w+").inner_literal_len, 0U);
+  EXPECT(hints("(?i)\\w+jumps").inner_literal_fold != 0U);
+}
+
+// The folded literal's scan finds every case of it, and nothing the core would not: routed equals core, the
+// route forced on these short subjects. The KELVIN SIGN and LONG S stand in the subjects as the members of
+// a fold orbit no two-byte scan sees.
+TEST(inner_literal_folded_matches_the_core)
+{
+  struct testcase { std::string_view pat; std::string_view text; };
+  const testcase cases[] {
+    {.pat = "(?i)\\w+xy", .text = "abxy ABXY aBxY ab xY Xy"},
+    {.pat = "(?i)(\\w+)holmes", .text = "SherlockHolmes sherlockHOLMES Holmes x_hOlMeS"},
+    {.pat = "(?i)\\w+ok", .text = "bOK boK bok BOk"},
+    {.pat = "(?i)\\w+sx", .text = "aſx aSX asx"},
+    {.pat = "(?ia)\\w+k", .text = "abK abk abK"},
+    {.pat = "\\w+[xX][yY]", .text = "axy aXY axY ay"},
+    {.pat = "(?i)\\w+ab:cd", .text = "xAB:CD xab:cd ab;cd x:cd"}, // the rarest byte is the exact `:`
+    // The literal's other case occurs in the rigid prefix's text: the route must decline (it answered [1,4)).
+    {.pat = "(XAB|A)[bB][bB]", .text = "XABBB"},
+  };
+  real::detail::inner_literal_guard_disabled() = true;
+  for (const testcase& tc : cases) {
+    real::detail::inner_literal_route_disabled() = true;
+    const auto core   {spans(tc.pat, tc.text)};
+    real::detail::inner_literal_route_disabled() = false;
+    const auto routed {spans(tc.pat, tc.text)};
+    EXPECT(!core.empty());
+    EXPECT(core == routed);
+  }
+  real::detail::inner_literal_guard_disabled() = false;
+  EXPECT(spans("(?i)\\w+xy", "abXY") == (std::vector<std::pair<std::size_t, std::size_t>> {{0, 4}}));
+}

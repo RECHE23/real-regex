@@ -589,6 +589,9 @@ namespace real {
        */
       std::int32_t il_rev_class {-1};
       bool         il_rev_is_cp {}; //!< \ref il_rev_class indexes `cp_classes` (a `klass_cp` loop) rather than `classes`.
+      //! \brief Bit `i`: byte `i` of \ref inner_literal is a lower-case ASCII letter that matches in either case
+      //!        (`(?i)x`, `[xX]`); 0 for an exact literal. In the padding before \ref il_fwd_class.
+      std::uint16_t inner_literal_fold {};
 
       /*!
        * \brief IL two-run confirm: the whole pattern is `class+ <literal> class+` (groups around either run

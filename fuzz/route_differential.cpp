@@ -11,8 +11,10 @@
 //!     its hints blanked; then every match and group of `find_iter` against the same walk with every
 //!     route's disable knob set, which also takes the batched walks off; then `search` again with one knob,
 //!     drawn per pattern, set alone.
-//!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x}. Every
-//!     match and group of `find_iter` with the route on against the route off.
+//!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x}; a third
+//!     of them under `(?i)` over {a, b, k, s, x}, against subjects holding both cases and the KELVIN SIGN and
+//!     LONG S that `k` and `s` fold to. Every match and group of `find_iter` with the route forced on (its
+//!     guards off, so a short subject takes it too) against the route off.
 //!
 //! Deterministic: the seed fixes the patterns and the subjects. Exit status 1 on the first divergence of
 //! each pattern (up to ten printed), 0 otherwise. Reproduce a reported line by its seed and count.
@@ -125,23 +127,24 @@ namespace {
     //! An atom of the inner mode: literals, alternations of them, and the loops around a literal.
     std::string inner_atom()
     {
+      const char* const abx {icase_ ? "abksx" : "abx"};
       switch (below(14)) {
         case 0:
-          return literal("abx");
+          return literal(abx);
         case 1:
-          return "(" + literal("abx") + "|" + literal("abx") + ")";
+          return "(" + literal(abx) + "|" + literal(abx) + ")";
         case 2:
-          return "(" + literal("abx") + "|" + literal("abx") + "|" + literal("abx") + ")";
+          return "(" + literal(abx) + "|" + literal(abx) + "|" + literal(abx) + ")";
         case 3:
           return "[ab]+";
         case 4:
           return "[abx]+";
         case 5:
-          return "(" + literal("abx") + "){1,2}";
+          return "(" + literal(abx) + "){1,2}";
         case 6:
-          return "(" + literal("abx") + "|" + literal("abx") + ")+";
+          return "(" + literal(abx) + "|" + literal(abx) + ")+";
         case 7:
-          return "(" + literal("abx") + ")+";
+          return "(" + literal(abx) + ")+";
         case 8:
           return "[ab]{1,3}";
         case 9:
@@ -149,7 +152,7 @@ namespace {
         case 10:
           return ".";
         case 11:
-          return "(" + literal("abx") + ")?";
+          return "(" + literal(abx) + ")?";
         case 12:
           return "[ax]*";
         default:
@@ -164,7 +167,9 @@ namespace {
 
     std::string inner_pattern()
     {
-      std::string p {captured(inner_atom()) + captured(inner_atom()) + literal("abx")};
+      icase_ = below(3) == 0;
+      std::string p {std::string {icase_ ? "(?i)" : ""} + captured(inner_atom()) + captured(inner_atom())
+                     + literal(icase_ ? "abksx" : "abx")};
       if (below(2) != 0) {
         p += captured(inner_atom());
       }
@@ -176,10 +181,12 @@ namespace {
 
     std::string inner_subject()
     {
+      // Under (?i): both cases, and the two non-ASCII members of the k and s fold orbits.
+      static constexpr const char* folded[] {"a", "b", "k", "s", "x", "A", "B", "K", "S", "X", "\u212a", "\u017f"};
       std::string s;
       const int   n {below(20)};
       for (int i {0}; i < n; ++i) {
-        s += "abx"[below(3)];
+        s += icase_ ? folded[below(static_cast<int>(std::size(folded)))] : std::string(1, "abx"[below(3)]);
       }
       return s;
     }
@@ -187,6 +194,7 @@ namespace {
   private:
 
     std::mt19937 rng_;
+    bool         icase_ {}; //!< The current inner pattern is under `(?i)`.
   };
 
   using knob = bool& (*)();
@@ -271,6 +279,7 @@ int main(int argc,
   std::set<std::string> diverged;
   long                  compiled {0};
   long                  armed {0};
+  long                  folded {0}; // on the route with a literal some of whose letters match in either case
   for (long i {0}; i < count; ++i) {
     const std::string        pattern {general_mode ? gen.general_pattern() : gen.inner_pattern()};
     std::vector<std::string> subjects;
@@ -292,6 +301,7 @@ int main(int argc,
     }
     ++compiled;
     armed += on_inner ? 1 : 0;
+    folded += on_inner && hints.inner_literal_fold != 0 ? 1 : 0;
     (void) re.fullmatch("warm"); // builds the immutables the routes read, as a second call would
     std::optional<dynamic_storage> general;
     if (general_mode) {
@@ -302,7 +312,11 @@ int main(int argc,
     for (const std::string& subject : subjects) {
       std::string why {general_mode ? search_divergence(re, *general, subject) : std::string {}};
       if (why.empty()) {
+        if (!general_mode) {
+          real::detail::inner_literal_guard_disabled() = true; // the route on a short subject too
+        }
         const slots with {walk(re, subject)};
+        real::detail::inner_literal_guard_disabled() = false;
         if (general_mode) {
           routes_off(true);
         }
@@ -328,7 +342,7 @@ int main(int argc,
       }
     }
   }
-  (void) std::printf("route_differential %s seed %u: %ld patterns (%ld on the inner-literal route), %zu diverge\n", argv[1],
-              seed, compiled, armed, diverged.size());
+  (void) std::printf("route_differential %s seed %u: %ld patterns (%ld on the inner-literal route, %ld of them case-folded), %zu diverge\n",
+              argv[1], seed, compiled, armed, folded, diverged.size());
   return diverged.empty() ? 0 : 1;
 }
