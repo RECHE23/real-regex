@@ -205,8 +205,10 @@ if(REAL_SANITIZE)
     if(MSVC)
         message(FATAL_ERROR "REAL_SANITIZE requires a GCC/Clang-family compiler")
     endif()
+    # -g1: line tables are all a sanitizer report reads (function, file, line, inlined frames).
+    # Full -g costs a third more compile time on every test TU, each of which instantiates the engine.
     target_compile_options(real_tests_bin PRIVATE
-        -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+        -fsanitize=address,undefined -fno-omit-frame-pointer -g1 -O1)
     target_link_options(real_tests_bin PRIVATE -fsanitize=address,undefined)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # libstdc++ <regex> _State std::function middle-end -Wmaybe-uninitialized FP under -O1.
