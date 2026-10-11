@@ -138,3 +138,23 @@ jobs:
           first=$((GITHUB_RUN_NUMBER * 100))
           make fuzz-pcre2 CXX=clang++ FUZZ_PCRE2_REQUIRE=1 FUZZ_PCRE2_PYTHON="$RUNNER_TEMP/arbiter/bin/python" \
             FUZZ_PCRE2_PATTERNS=20000 FUZZ_PCRE2_SEEDS="$(seq "$first" $((first + 99)) | tr '\n' ' ')"
+
+  # The Go binding against regexp over generated patterns (bindings/go/regexp_generated_diff_test.go),
+  # wider than the per-push run and on 50 seeds of its own each week. A red names its seed.
+  go-regexp:
+    name: fuzz-long (go regexp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Install g++ (cgo needs a C++ compiler)
+        run: sh tools/ci-apt-ubuntu.sh g++
+      - name: Generated patterns against regexp, 50 seeds
+        working-directory: bindings/go
+        run: |
+          first=$((GITHUB_RUN_NUMBER * 50))
+          REAL_GO_DIFF_SEEDS="$(seq "$first" $((first + 49)) | tr '\n' ' ')" REAL_GO_DIFF_PATTERNS=20000 \
+            go test -run 'TestGenerated' -count=1 -timeout 50m -v .
