@@ -74,13 +74,15 @@ const char* real_version(void);
 enum {
   REAL_ERR_NONE = 0,        /* success */
   REAL_ERR_SYNTAX = 1,      /* the pattern is malformed */
-  REAL_ERR_UNSUPPORTED = 2  /* well-formed but beyond REAL's linear engine (backreference, \p{...}, …) */
+  REAL_ERR_UNSUPPORTED = 2, /* well-formed but beyond REAL's linear engine (backreference, \p{...}, …) */
+  REAL_ERR_ARGUMENT = 3     /* an argument outside the contract: a flag bit no real::flags value has */
 };
 
 /* Compile [pattern, pattern+len). `flags` is a bitmask of real::flags (icase=1, multiline=2, dotall=4,
- * bytes=8, verbose=16, ecma=32, ascii=64, dollar_endonly=128 — see the numbering table above). Returns
- * NULL on error, filling `errbuf` (NUL-terminated) and (if non-NULL) `code` with one of the REAL_ERR_*
- * values. The returned handle must be freed with real_free. */
+ * bytes=8, verbose=16, ecma=32, ascii=64, dollar_endonly=128 — see the numbering table above); a bit no
+ * real::flags value has is refused (REAL_ERR_ARGUMENT), never ignored. Returns NULL on error, filling
+ * `errbuf` (NUL-terminated) and (if non-NULL) `code` with one of the REAL_ERR_* values. The returned handle
+ * must be freed with real_free. */
 real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
                          char* errbuf, size_t errbuf_len, int* code);
 
@@ -142,7 +144,7 @@ size_t real_count_matches(const real_regex* re, const char* text, size_t len);
  * slice: `\A`/`^` without MULTILINE still fail at start > 0, exactly as in the C++/Python APIs. `end`
  * truncates the subject to a view (clamped to len); start > end yields no match, not an error. On a match
  * (return 1), `spans` is filled exactly like real_iter_next's (NULL: not filled). Returns 0 on no match, -1 on
- * error (NULL re/text, or an internal engine error). */
+ * error (NULL re/text, a `mode` that is none of the three, or an internal engine error). */
 enum {
   REAL_MODE_SEARCH = 0,   /* leftmost match anywhere in the region (Python re.search) */
   REAL_MODE_MATCH = 1,    /* anchored at `start` (Python re.match) */
@@ -241,7 +243,8 @@ size_t real_expand(const real_regex* re, const char* text, size_t len,
 typedef struct real_regex_set real_regex_set;
 
 /* Compile N patterns into a set. `patterns[i]` has length `lens[i]`. `flags` applies to every
- * pattern. Fails (NULL) if any pattern is invalid — no silent skip. Bitset order = patterns order.
+ * pattern, and an unknown bit is refused as by real_compile. Fails (NULL) if any pattern is invalid — no
+ * silent skip. Bitset order = patterns order.
  * The (NULL, nonzero) rule stated above applies PER MEMBER, not only to the array: a non-null
  * `patterns` says nothing about `patterns[i]`, and the error names the index. */
 real_regex_set* real_set_compile(const char* const* patterns, const size_t* lens, size_t n,

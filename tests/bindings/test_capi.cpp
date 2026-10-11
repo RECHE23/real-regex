@@ -93,6 +93,34 @@ TEST(capi_error_codes_and_null_iter)
   EXPECT(real_iter_next(nullptr, spans.data()) == -1);
 }
 
+TEST(capi_refuses_a_flag_bit_or_a_mode_it_does_not_know)
+{
+  // Every real::flags bit compiles; one above them is refused, never ignored (an older library handed a newer
+  // binding's flag would otherwise match with other semantics).
+  int               code = 0;
+  const uint32_t    every {(static_cast<uint32_t>(real::flags::ungreedy) * 2U) - 1U};
+  real_regex* const known {compile("a", every & ~static_cast<uint32_t>(real::flags::verbose), code)};
+  EXPECT(known != nullptr);
+  real_free(known);
+  for (const uint32_t unknown : {static_cast<uint32_t>(real::flags::ungreedy) << 1U, 0x80000000U, 0xFFFFFFFFU}) {
+    EXPECT(compile("a", unknown, code) == nullptr);
+    EXPECT(code == REAL_ERR_ARGUMENT);
+    const char* const patterns[] {"a"};
+    const size_t      lens[]     {1};
+    char              err[64];
+    EXPECT(real_set_compile(patterns, lens, 1, unknown, err, sizeof(err), &code) == nullptr);
+    EXPECT(code == REAL_ERR_ARGUMENT);
+  }
+  // A mode none of REAL_MODE_* names is an error, not a search.
+  real_regex* const        re {compile("b", 0, code)};
+  std::vector<std::size_t> spans(2);
+  for (const int mode : {-1, 3, 7}) {
+    EXPECT(real_match(re, "ab", 2, 0, 2, mode, spans.data()) == -1);
+  }
+  EXPECT(real_match(re, "ab", 2, 0, 2, REAL_MODE_SEARCH, spans.data()) == 1);
+  real_free(re);
+}
+
 namespace {
   // The engine's own verdict on a pattern, read through the C++ API: the oracle the _ex entry points
   // must hand over unchanged.
@@ -296,7 +324,7 @@ TEST(capi_count_and_match)
   EXPECT(real_match(re, "abcx", 4, 0, 4, REAL_MODE_FULLMATCH, spans) == 0);  // a trailing byte
   EXPECT(real_match(re, "xabcx", 5, 1, 4, REAL_MODE_FULLMATCH, spans) == 1); // the region [1, 4)
   EXPECT(spans[0] == 1 && spans[1] == 4);
-  EXPECT(real_match(re, "xxabc", 5, 0, 5, 99, spans) == 1 && spans[0] == 2); // an unknown mode searches
+  EXPECT(real_match(re, "xxabc", 5, 0, 5, 99, spans) == -1);                 // an unknown mode is an error
   EXPECT(real_can_extend(re, "ab", 2, 0) == 1);                              // the pattern may still complete
   EXPECT(real_can_extend(re, "abcx", 4, 0) == 0);                            // decided by the text there
   EXPECT(real_can_extend(re, nullptr, 0, 0) == 1);                           // (NULL, 0): everything is still to come

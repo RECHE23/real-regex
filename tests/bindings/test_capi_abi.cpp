@@ -18,6 +18,7 @@
 static_assert(REAL_ERR_NONE == 0);
 static_assert(REAL_ERR_SYNTAX == 1);
 static_assert(REAL_ERR_UNSUPPORTED == 2);
+static_assert(REAL_ERR_ARGUMENT == 3);
 static_assert(REAL_MODE_SEARCH == 0);
 static_assert(REAL_MODE_MATCH == 1);
 static_assert(REAL_MODE_FULLMATCH == 2);
@@ -27,6 +28,7 @@ TEST(capi_abi_error_ordinals_pinned)
   EXPECT_EQ(REAL_ERR_NONE, 0);
   EXPECT_EQ(REAL_ERR_SYNTAX, 1);
   EXPECT_EQ(REAL_ERR_UNSUPPORTED, 2);
+  EXPECT_EQ(REAL_ERR_ARGUMENT, 3);
 }
 
 TEST(capi_abi_mode_ordinals_pinned)

@@ -126,11 +126,23 @@ static bool null_with_length(const char* data, size_t len)
   return data == nullptr && len != 0;
 }
 
+//! Whether \p flags sets a bit no real::flags value has. An older library handed a newer binding's flag
+//! would otherwise compile with other semantics and say nothing.
+static bool unknown_flags(uint32_t flags)
+{
+  constexpr uint32_t known {(static_cast<uint32_t>(real::flags::ungreedy) << 1U) - 1U};
+  return (flags & ~known) != 0U;
+}
+
 static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, const compile_report& report)
 {
   report.begin();
   if (null_with_length(pattern, len)) {
     report.fail(REAL_ERR_SYNTAX, "null pattern with a nonzero length");
+    return nullptr;
+  }
+  if (unknown_flags(flags)) {
+    report.fail(REAL_ERR_ARGUMENT, "unknown flag bits");
     return nullptr;
   }
   return guarded_compile(report, [&] {
@@ -318,7 +330,8 @@ size_t real_left_context(const real_regex* re)
 int real_match(const real_regex* re, const char* text, size_t len,
                size_t start, size_t end, int mode, size_t* spans)
 {
-  if (re == nullptr || (text == nullptr && len != 0)) {
+  if (re == nullptr || (text == nullptr && len != 0)
+      || (mode != REAL_MODE_SEARCH && mode != REAL_MODE_MATCH && mode != REAL_MODE_FULLMATCH)) {
     return -1;
   }
   try {
@@ -327,7 +340,6 @@ int real_match(const real_regex* re, const char* text, size_t len,
                                     switch (mode) {
                                       case REAL_MODE_MATCH:      return re->rx.match(sv, start, end);
                                       case REAL_MODE_FULLMATCH:  return re->rx.fullmatch(sv, start, end);
-                                      case REAL_MODE_SEARCH:
                                       default:                   return re->rx.search(sv, start, end);
                                     }
                                   };
@@ -748,6 +760,10 @@ static real_regex_set* compile_set(const char* const* patterns, const size_t* le
   report.begin();
   if (patterns == nullptr && n > 0) {
     report.fail(REAL_ERR_SYNTAX, "null patterns");
+    return nullptr;
+  }
+  if (unknown_flags(flags)) {
+    report.fail(REAL_ERR_ARGUMENT, "unknown flag bits");
     return nullptr;
   }
   return guarded_compile(report, [&]() -> real_regex_set* {
