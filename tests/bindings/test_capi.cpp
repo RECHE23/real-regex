@@ -48,6 +48,13 @@ TEST(capi_compile_iterate_groups)
   EXPECT(real_iter_next(it, spans.data()) == 1);
   EXPECT(real_iter_next(it, spans.data()) == 0);
   real_iter_free(it);
+
+  // A NULL spans buffer counts the matches without them.
+  real_iter* counting = real_find_iter(re, text, std::strlen(text));
+  EXPECT(real_iter_next(counting, nullptr) == 1);
+  EXPECT(real_iter_next(counting, nullptr) == 1);
+  EXPECT(real_iter_next(counting, nullptr) == 0);
+  real_iter_free(counting);
   real_free(re);
 }
 

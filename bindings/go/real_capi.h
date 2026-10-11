@@ -124,8 +124,9 @@ real_iter* real_find_iter_at(const real_regex* re, const char* text, size_t len,
 real_iter* real_find_iter_between(const real_regex* re, const char* text, size_t len, size_t start, size_t end);
 
 /* Advance to the next match. On a match (return 1), fills `spans` with 2 * real_group_count(re) offsets
- * (start0, end0, start1, end1, …); an unset group is (SIZE_MAX, SIZE_MAX). Returns 0 at the end of iteration,
- * and -1 on an internal engine error or a NULL iterator (no C++ exception ever crosses this boundary). */
+ * (start0, end0, start1, end1, …); an unset group is (SIZE_MAX, SIZE_MAX). A NULL `spans` advances past the match
+ * without them. Returns 0 at the end of iteration, and -1 on an internal engine error or a NULL iterator (no C++
+ * exception ever crosses this boundary). */
 int real_iter_next(real_iter* iter, size_t* spans);
 
 void real_iter_free(real_iter* iter);
@@ -140,8 +141,8 @@ size_t real_count_matches(const real_regex* re, const char* text, size_t len);
  * overloads. `mode` is one of the REAL_MODE_* values below. `start` is the VM's anchor position, not a
  * slice: `\A`/`^` without MULTILINE still fail at start > 0, exactly as in the C++/Python APIs. `end`
  * truncates the subject to a view (clamped to len); start > end yields no match, not an error. On a match
- * (return 1), `spans` is filled exactly like real_iter_next's. Returns 0 on no match, -1 on error (NULL
- * re/text, or an internal engine error). */
+ * (return 1), `spans` is filled exactly like real_iter_next's (NULL: not filled). Returns 0 on no match, -1 on
+ * error (NULL re/text, or an internal engine error). */
 enum {
   REAL_MODE_SEARCH = 0,   /* leftmost match anywhere in the region (Python re.search) */
   REAL_MODE_MATCH = 1,    /* anchored at `start` (Python re.match) */
