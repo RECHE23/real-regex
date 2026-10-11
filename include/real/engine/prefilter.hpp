@@ -1620,9 +1620,9 @@ namespace real::detail {
     std::size_t   pc         {0};
     std::size_t   offset     {0};
     std::int16_t  best_byte  {-1};
-    std::uint8_t  best_off   {0};
+    std::uint16_t best_off   {0};
     std::uint16_t best_freq  {0xFFFFU};
-    while (pc < code.size() && offset <= 0xFFU) {
+    while (pc < code.size() && offset <= 0xFFFFU) {
       const opcode op {code[pc].op};
       if (op == opcode::save || op == opcode::assert_position) {
         ++pc;
@@ -1633,7 +1633,7 @@ namespace real::detail {
         if (freq < best_freq) {
           best_freq = freq;
           best_byte = static_cast<std::int16_t>(static_cast<std::uint8_t>(code[pc].arg8));
-          best_off  = static_cast<std::uint8_t>(offset);
+          best_off  = static_cast<std::uint16_t>(offset);
         }
         ++offset;
         ++pc;

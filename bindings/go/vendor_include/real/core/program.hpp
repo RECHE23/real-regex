@@ -454,8 +454,9 @@ namespace real {
       //! \brief A required byte at a fixed offset from the match start, rarer than the first-byte set (the
       //!        date `-` at offset 4): the search `memchr`s it and back-verifies from `found - rare_offset`.
       //!        -1 when none.
-      std::int16_t rare_byte   {-1};
-      std::uint8_t rare_offset {}; //!< The fixed byte offset of \ref rare_byte from the match start.
+      std::int16_t  rare_byte   {-1};
+      std::uint16_t rare_offset {}; //!< The fixed byte offset of \ref rare_byte from the match start; 16 bits
+                                    //!< sit in the padding before \ref rare_disc.
 
       //! \brief Rare discriminant with an optional byte before it (URL `https?://…`): `memchr(rare_disc)`,
       //!        then back-verify `[prefix][opt?][disc][after]`. Chosen over a weak literal prefix (`http`)
