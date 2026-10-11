@@ -15,6 +15,8 @@
 
 #include <real/compat/std/regex.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <regex>
@@ -109,6 +111,93 @@ namespace {
       }
     }
     return unbounded >= 3;
+  }
+
+  // The shape no subject bound helps: a group with many EMPTY alternatives under a counted repeat --
+  // `(a||||…|b){3}`. Each iteration may take any empty branch, so a backtracker tries about k^m ways to
+  // place m iterations of a group with k empty branches before the subject matters: a scheduled long run
+  // died on `libFuzzer: timeout after 10 seconds` with some 120 empty branches repeated {3} over a TWO-byte
+  // subject, every frame in std::__detail::_Executor -- the oracle's, and compat's own regex_replace, which
+  // routes such a nullable pattern to std by design. Scanned, not parsed: per group, its empty branches and
+  // the largest count its quantifier allows (an unbounded one counts as two: the subject-length gate below
+  // owns that case). A false positive only skips a pattern.
+  constexpr double max_empty_alternative_paths {1e5};
+
+  bool empty_alternatives_explode(std::string_view pat)
+  {
+    std::vector<std::size_t> empty {0};    // per depth: empty branches seen so far
+    std::vector<bool>        fresh {true}; // per depth: the current branch has no atom yet
+    bool                     in_class {false};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      const char c {pat[i]};
+      if (in_class) {
+        if (c == '\\') {
+          ++i;
+        }
+        else if (c == ']') {
+          in_class = false;
+        }
+        continue;
+      }
+      if (c == '\\' || c == '[') {
+        in_class      = (c == '[');
+        i            += (c == '\\') ? 1U : 0U;
+        fresh.back()  = false;
+        continue;
+      }
+      if (c == '(') {
+        fresh.back() = false;
+        empty.push_back(0);
+        fresh.push_back(true);
+        if (i + 1 < pat.size() && pat[i + 1] == '?') { // (?: (?= (?! (?<= (?<! (?<name>: not an atom
+          i += 2;
+          if (i < pat.size() && pat[i] == '<') {
+            while (i < pat.size() && pat[i] != '>' && pat[i] != '=' && pat[i] != '!') {
+              ++i;
+            }
+          }
+        }
+        continue;
+      }
+      if (c == '|') {
+        empty.back() += fresh.back() ? 1U : 0U;
+        fresh.back()  = true;
+        continue;
+      }
+      if (c == ')' && empty.size() > 1) {
+        const std::size_t k {empty.back() + (fresh.back() ? 1U : 0U)};
+        empty.pop_back();
+        fresh.pop_back();
+        double repeats {1.0};
+        if (i + 1 < pat.size() && (pat[i + 1] == '*' || pat[i + 1] == '+')) {
+          repeats = 2.0;
+        }
+        else if (i + 1 < pat.size() && pat[i + 1] == '{') {
+          std::size_t j {i + 2};
+          double      n {0.0};
+          while (j < pat.size() && pat[j] >= '0' && pat[j] <= '9') {
+            n = (n * 10.0) + static_cast<double>(pat[j] - '0');
+            ++j;
+          }
+          double upper {n};
+          if (j < pat.size() && pat[j] == ',') {
+            ++j;
+            upper = (j < pat.size() && pat[j] == '}') ? n + 2.0 : 0.0;
+            while (j < pat.size() && pat[j] >= '0' && pat[j] <= '9') {
+              upper = (upper * 10.0) + static_cast<double>(pat[j] - '0');
+              ++j;
+            }
+          }
+          repeats = std::max(n, upper);
+        }
+        if (k >= 2 && std::pow(static_cast<double>(k), repeats) > max_empty_alternative_paths) {
+          return true;
+        }
+        continue;
+      }
+      fresh.back() = false;
+    }
+    return false;
   }
 
   constexpr std::size_t max_counted_repeat_load {256};
@@ -322,6 +411,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
       && (nested_unbounded_quantifier(pattern) || quantified_nullable_group(pattern)
           || stacked_unbounded_quantifiers(pattern))) {
     return 0; // std, the oracle, has no bound for these shapes -- see the three predicates above
+  }
+  if (empty_alternatives_explode(pattern)) {
+    return 0; // nor for this one, at any subject length -- see empty_alternatives_explode
   }
 
   real::compat::regex compat;
