@@ -24,3 +24,15 @@ fn bytes_answer_the_same() {
     assert!(re.can_extend(b"ab", 0));
     assert!(!re.can_extend(b"ab\xff", 0));
 }
+
+#[test]
+fn left_context_bounds_what_a_match_reads_before_its_start() {
+    // An upper bound: 0 when nothing before the start is read, else at least what the pattern reads there.
+    assert_eq!(Regex::new("abc").unwrap().left_context(), 0);
+    assert!(Regex::new("(?<=ab)c").unwrap().left_context() >= 2);
+    assert!(Regex::new(r"\bab").unwrap().left_context() >= 1); // the boundary reads the character before
+    assert_eq!(
+        real_regex::bytes::Regex::new("(?<=ab)c").unwrap().left_context(),
+        Regex::new("(?<=ab)c").unwrap().left_context()
+    );
+}

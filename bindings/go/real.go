@@ -631,6 +631,20 @@ func (r *Regexp) CanExtend(text []byte, start int) bool {
 	return extends
 }
 
+// LeftContext reports how many bytes before a position a match there may read: a lookbehind reads back as
+// far as it can consume, and `\b`, `\B`, a line start and `\A` read what precedes the position. A caller
+// that keeps only part of a text -- a lexer reading it in pieces -- keeps this many bytes before where it
+// matches next. 0 when the pattern reads nothing before its start, and after Close. A REAL extension, like
+// CanExtend.
+func (r *Regexp) LeftContext() int {
+	if r.re == nil {
+		return 0
+	}
+	bound := C.real_left_context(r.re)
+	runtime.KeepAlive(r)
+	return int(bound)
+}
+
 // dollarProbe is a dummy match so regexp.Expand itself classifies templates.
 // A handwritten $1/$&/${name} list was wrong in both directions: it missed
 // $name (Go's documented spelling) and rejected $& (which Expand leaves literal).

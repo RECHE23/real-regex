@@ -295,6 +295,8 @@ TEST(capi_count_and_match)
   EXPECT(real_can_extend(re, nullptr, 0, 0) == 1);                           // (NULL, 0): everything is still to come
   EXPECT(real_can_extend(re, nullptr, 3, 0) == -1);                          // a claimed length with nothing behind it
   EXPECT(real_can_extend(nullptr, "abc", 3, 0) == -1);
+  EXPECT(real_left_context(re) == 0);                                        // reads nothing before its start
+  EXPECT(real_left_context(nullptr) == SIZE_MAX);
   EXPECT(real_match(re, "abc", 3, 0, 3, REAL_MODE_SEARCH, nullptr) == 1);    // spans are optional
   EXPECT(real_match(nullptr, "abc", 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);
   EXPECT(real_match(re, nullptr, 3, 0, 3, REAL_MODE_SEARCH, spans) == -1);

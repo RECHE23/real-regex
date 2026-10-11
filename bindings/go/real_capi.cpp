@@ -305,6 +305,14 @@ int real_can_extend(const real_regex* re, const char* text, size_t len, size_t s
   }
 }
 
+size_t real_left_context(const real_regex* re)
+{
+  if (re == nullptr) {
+    return SIZE_MAX;
+  }
+  return re->rx.left_context();
+}
+
 int real_match(const real_regex* re, const char* text, size_t len,
                size_t start, size_t end, int mode, size_t* spans)
 {

@@ -306,6 +306,16 @@ namespace real::compiled {
     }
 
     /*!
+     * \brief How far before a position a match there may read, in bytes: a caller that keeps only part of
+     *        a text keeps this many bytes before where it matches next (`real::regex::left_context`).
+     * \return The bound.
+     */
+    [[nodiscard]] std::size_t left_context() const noexcept
+    {
+      return real_left_context(handle_.get()); // the handle is never null on a constructed object
+    }
+
+    /*!
      * \brief Every non-overlapping match of \p text, in order (Python `re.finditer`).
      * \param[in] text The subject.
      * \return The matches.

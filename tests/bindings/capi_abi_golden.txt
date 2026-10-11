@@ -41,6 +41,7 @@ FN int real_match(const real_regex*,const char*,size_t,size_t,size_t,int,size_t*
 FN size_t real_expand_all(const real_regex*,const char*,size_t,const size_t*,size_t,size_t,const char*,size_t,char*,size_t,char*,size_t)
 FN size_t real_find_all_regexp(const real_regex*,const char*,size_t,size_t*,size_t*,size_t*,size_t)
 FN int real_can_extend(const real_regex*,const char*,size_t,size_t)
+FN size_t real_left_context(const real_regex*)
 FN size_t real_sub(const real_regex*,const char*,size_t,const char*,size_t,size_t,char*,size_t,size_t*,char*,size_t)
 FN size_t real_expand(const real_regex*,const char*,size_t,const size_t*,size_t,const char*,size_t,char*,size_t,char*,size_t)
 FN real_regex_set* real_set_compile(const char*const*,const size_t*,size_t,uint32_t,char*,size_t,int*)

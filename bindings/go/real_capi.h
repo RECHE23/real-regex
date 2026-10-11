@@ -185,6 +185,13 @@ size_t real_find_all_regexp(const real_regex* re, const char* text, size_t len,
  * Returns 1 or 0, and -1 on error (NULL re, or NULL text with a nonzero len). */
 int real_can_extend(const real_regex* re, const char* text, size_t len, size_t start);
 
+/* How many bytes before `start` a match there may read: real_match(re, text, len, start, ...) reads `text`
+ * from `start - real_left_context(re)` on and nothing earlier (a lookbehind reads back as far as it can
+ * consume; `\b`, `\B`, a line start and `\A` read what precedes `start`). A caller that keeps only part of a
+ * text -- a lexer reading it in pieces -- keeps this many bytes before where it matches next. 0 when the
+ * pattern reads nothing before where it starts. Returns the bound, or (size_t)-1 on error (NULL re). */
+size_t real_left_context(const real_regex* re);
+
 /* Applies a Python re-compatible replacement template across the non-overlapping matches of `re` in
  * [text, text+len), replacing up to `count` of them (0 = all, matching re.sub's default; no pos/endpos —
  * re.sub has none either). Template syntax: \1..\<N> and \g<n>/\g<name> group references, \n \t \r \f \v \a

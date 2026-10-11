@@ -806,6 +806,24 @@ func TestEmptyMatchEnumerationMatchesStdlib(t *testing.T) {
 	}
 }
 
+func TestLeftContext(t *testing.T) {
+	// An upper bound: 0 when nothing before the start is read, else at least what the pattern reads there.
+	if got := MustCompile("abc").LeftContext(); got != 0 {
+		t.Errorf("LeftContext(abc) = %d, want 0", got)
+	}
+	if got := MustCompile("(?<=ab)c").LeftContext(); got < 2 {
+		t.Errorf("LeftContext((?<=ab)c) = %d, want at least the 2 bytes the lookbehind reads", got)
+	}
+	if MustCompile(`\bab`).LeftContext() < 1 {
+		t.Errorf("LeftContext of a leading word boundary reads no character before")
+	}
+	closed := MustCompile("(?<=ab)c")
+	closed.Close()
+	if got := closed.LeftContext(); got != 0 {
+		t.Errorf("LeftContext after Close = %d, want 0", got)
+	}
+}
+
 func TestCanExtend(t *testing.T) {
 	re := MustCompile("[a-z]+")
 	if !re.CanExtend([]byte("ab"), 0) {

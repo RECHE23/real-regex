@@ -157,6 +157,15 @@ TEST(compiled_names_flags_and_substitution)
   EXPECT(real::compiled::abi_matches());
 }
 
+// left_context crosses the ABI with the engine's bound: none, a word boundary, a line start, lookbehinds.
+TEST(compiled_left_context_agrees_with_the_engine)
+{
+  for (const std::string_view pattern : {"abc", R"(\bab)", "(?m)^a", "(?<=ab)c", "(?<=a|bcd)x", R"((?<!\d{3})y)"}) {
+    EXPECT_EQ(real::compiled::regex {pattern}.left_context(), real::regex {pattern}.left_context());
+  }
+  EXPECT(real::compiled::regex {"(?<=ab)c"}.left_context() >= 2U); // at least the lookbehind's width
+}
+
 // can_extend crosses the ABI with the engine's answer, for every anchor of a few texts.
 TEST(compiled_can_extend_agrees_with_the_engine)
 {

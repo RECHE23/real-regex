@@ -39,6 +39,7 @@ extern "C" {
     fn real_iter_free(iter: *mut RealIter);
     fn real_count_matches(re: *const RealRegex, text: *const c_char, len: usize) -> usize;
     fn real_can_extend(re: *const RealRegex, text: *const c_char, len: usize, start: usize) -> i32;
+    fn real_left_context(re: *const RealRegex) -> usize;
     fn real_match(re: *const RealRegex, text: *const c_char, len: usize, start: usize, end: usize, mode: i32,
                   spans: *mut usize) -> i32;
     fn real_set_compile_ex(patterns: *const *const c_char, lens: *const usize, n: usize, flags: u32,
@@ -538,6 +539,19 @@ impl Regex {
         // SAFETY: the handle is live for &self and the pointer/length pair describes `text`.
         let rc = unsafe { real_can_extend(self.handle, text.as_ptr().cast::<c_char>(), text.len(), start) };
         rc != 0 // an internal error (-1) answers true as well: waiting is the side that loses nothing
+    }
+
+    /// How many bytes before a position a match there may read: a lookbehind reads back as far as it can
+    /// consume, and `\b`, `\B`, a line start and `\A` read what precedes the position. A caller that keeps
+    /// only part of a text — a lexer reading it in pieces — keeps this many bytes before where it matches
+    /// next. `0` when the pattern reads nothing before its start. A pattern delegated to the `regex`
+    /// crate (the `fallback` feature) cannot bound it, and says `usize::MAX`: keep everything.
+    pub fn left_context(&self) -> usize {
+        if self.handle.is_null() {
+            return usize::MAX;
+        }
+        // SAFETY: the handle is live for &self.
+        unsafe { real_left_context(self.handle) }
     }
 
     /// The leftmost match's whole-match span, or `None`.
@@ -1683,7 +1697,8 @@ impl<'t> Iterator for SplitN<'_, 't> {
 /// whole match; spans are byte offsets.
 pub mod bytes {
     use super::{
-        compile_handle, real_can_extend, real_find_iter, real_find_iter_at, real_free, CaptureLocations, Error,
+        compile_handle, real_can_extend, real_find_iter, real_find_iter_at, real_free, real_left_context,
+        CaptureLocations, Error,
         GroupInfo, RawSpans, RealRegex, SlotStore, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE,
         FLAG_MULTILINE, FLAG_VERBOSE,
     };
@@ -1782,6 +1797,12 @@ pub mod bytes {
             // SAFETY: the handle is live for &self and the pointer/length pair describes `text`.
             let rc = unsafe { real_can_extend(self.handle, text.as_ptr().cast::<c_char>(), text.len(), start) };
             rc != 0
+        }
+
+        /// How many bytes before a position a match there may read (see [`crate::Regex::left_context`]).
+        pub fn left_context(&self) -> usize {
+            // SAFETY: the handle is live for &self.
+            unsafe { real_left_context(self.handle) }
         }
 
         /// The capture groups of the leftmost match, or `None`.
