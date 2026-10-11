@@ -38,7 +38,6 @@ TEST(the_lowered_limits_are_the_ones_in_force)
   EXPECT_EQ(real::detail::max_lookaround_length, 4);
   EXPECT_EQ(real::detail::max_program_size, 256U);
   EXPECT_EQ(real::detail::max_dfa_states, 16U);
-  EXPECT_EQ(real::dfa_default_state_budget, 16U); // dfa_faithful's default search follows the cap
 }
 
 TEST(each_lowered_limit_rejects_just_past_itself)
