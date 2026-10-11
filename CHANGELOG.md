@@ -2,6 +2,24 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.11
+
+10.11 (**prefilters that keep their filter: a far rare byte, a case-insensitive literal; a wide fixed shape on the
+lazy DFA**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode**: three route changes, none on a benchmarked pattern. A rare byte past offset 255 keeps its
+  memchr (2881c53b); a fixed shape wider than 8 bytes with no filter to skip starts by runs the lazy DFA
+  (6533a437); a letter that matches in either case joins the inner literal (e25ce615). Every pattern of
+  `benchmarks/` was compiled before and after: the same `fixed_shape` hint on each, and `(?i)cafe` / `(?i)café`
+  keep `fixed_shape_pair` (1.07 against 1.08 ms over 1 MiB, arm64).
+- **§B**, `bench.py` median of three on arm64 (2026-10-11) against the stamped table: every ratio within 4.1 % but
+  the known-unstable `sub · dates with refs` (92.1× / 90.5× / 89.4×). The three lowest (`literal · hit` −2.7 %,
+  `literal · miss` −3.6 %, `split · commas` −4.1 %) were reproduced in C++ against 10.10: the literal search is
+  identical (12.6 µs per MiB both), and a 1.4 % slower `find_iter(",")` is layout — the same instruction count
+  to 261 in 89 million (callgrind, GCC 15.3, x86-64).
+- **Not in a table**: `real_iter_next` with a NULL spans buffer (a crash, fixed), `left_context` in the C ABI, Go
+  and Rust, and the `REAL_MAX_*` limits (compile-time constants, unchanged at their defaults).
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.10
 
 10.10 (**fixes from the October audit, and `dfa::munch`**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
