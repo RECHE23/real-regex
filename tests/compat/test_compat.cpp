@@ -1637,6 +1637,24 @@ TEST(compat_word_boundary_conformance)
   EXPECT(m.length(0) == 0);
 }
 
+TEST(compat_caret_in_a_lookahead_anchors_at_the_subject_start)
+{
+  // libstdc++ anchors a `^` inside a lookahead at the lookahead's own start, so it matches `a(?=^b)` on "ab"
+  // and refuses `a(?!^b)`; ECMAScript, libc++ and node anchor it at the subject's start. The fuzz-compat
+  // differential skips such patterns under libstdc++, and the ECMAScript answer is pinned here on real.
+  rc::smatch        m;
+  const std::string ab    {"ab"};
+  const rc::regex   ahead {"a(?=^b)"};
+  EXPECT(ahead.uses_real());
+  EXPECT(!rc::regex_search(ab, m, ahead));
+  const rc::regex not_ahead {"a(?!^b)"};
+  EXPECT(rc::regex_search(ab, m, not_ahead));
+  EXPECT(m.position(0) == 0);
+  // Positive control: at the subject's start the anchor holds.
+  const rc::regex at_start {"(?=^a)a"};
+  EXPECT(rc::regex_search(ab, m, at_start));
+}
+
 // A std backend can fail while it matches, long after construction (libc++ gives up on `(?:a?){1000}` with
 // error_complexity): every error the layer reports is the compat type, never a raw std::regex_error, on the
 // replace, search and iterator routes that reach std.

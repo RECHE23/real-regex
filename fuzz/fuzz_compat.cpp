@@ -27,10 +27,38 @@
 
 namespace {
 
+  //! \brief Whether \p pat holds a `^` outside a bracket expression after a lookahead opens: libstdc++
+  //!        anchors such a `^` at the lookahead's own start (`a(?=^b)` matches "ab", `a(?!^b)` does not),
+  //!        where ECMAScript, libc++ and node anchor it at the subject's. Over-wide (it does not track
+  //!        where the lookahead closes), which only skips.
+  bool caret_after_lookahead(std::string_view pat)
+  {
+    std::size_t from {pat.find("(?=")};
+    from = std::min(from, pat.find("(?!"));
+    bool in_class {false};
+    for (std::size_t i {from}; i < pat.size(); ++i) {
+      if (pat[i] == '\\') {
+        ++i;
+      } else if (pat[i] == '[') {
+        in_class = true;
+      } else if (pat[i] == ']') {
+        in_class = false;
+      } else if (pat[i] == '^' && !in_class) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // A pattern the harness must not compare against std at all (real follows spec, libstdc++
   // deviates on it, so a both-accept span comparison would be meaningless).
   bool allowlisted(std::string_view pat)
   {
+#if defined(__GLIBCXX__)
+    if (caret_after_lookahead(pat)) {
+      return true;
+    }
+#endif
     // `\b`/`\B` anywhere: std::regex (libstdc++ AND libc++) mis-evaluates word boundaries in at
     // least two independent ways — `[a-z]{4,}(?=\b)` on "dacd1..." matches under std though
     // 'd'→'1' is word→word (ECMAScript says none), and bare `\B` on "_" matches under std though
