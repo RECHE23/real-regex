@@ -127,6 +127,7 @@ namespace {
   // JSON shape ({meta,cases,scaling,redos}), so it does NOT use emit_case/emit_run.
   using sciforge::bench::json_array;
   using sciforge::bench::json_join;
+  using sciforge::bench::json_integer;
   using sciforge::bench::json_number;
   using sciforge::bench::json_object;
   using sciforge::bench::json_string;
@@ -172,7 +173,7 @@ namespace {
   std::string engine_result(const result& r)
   {
     return json_object({{"samples", json_array(r.samples)},
-                         {"count", json_number(static_cast<double>(r.count))}});
+                         {"count", json_integer(r.count)}});
   }
 
   // --- corpora ---------------------------------------------------------------
@@ -660,7 +661,7 @@ namespace {
                                    std::size_t(100000), std::size_t(1000000)}) {
       const std::string corpus = corpus_words(size);
       entries.push_back(json_object({
-        {"size", json_number(static_cast<double>(corpus.size()))},
+        {"size", json_integer(corpus.size())},
         {"engines", engines_object(pattern, corpus, n)},
       }));
     }
