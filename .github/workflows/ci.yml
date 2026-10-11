@@ -278,6 +278,15 @@ jobs:
         run: sh tools/ci-apt-ubuntu.sh libre2-dev pkg-config
       - name: RE2 drop-in differential (real::compat::re2 vs true libre2)
         run: make fuzz-re2 CXX=clang++
+      # real::regex vs PCRE2 over generated patterns, each divergence arbitrated by `re` (fuzz/pcre2_arbiter.py).
+      # Reproduce: make fuzz-pcre2 (needs pkg-config libpcre2-8 and Python `regex`); a red names its seed and mode.
+      - name: Install PCRE2 and the arbiter's Python regex
+        run: |
+          sh tools/ci-apt-ubuntu.sh libpcre2-dev
+          python3 -m venv "$RUNNER_TEMP/arbiter"
+          "$RUNNER_TEMP/arbiter/bin/pip" install --quiet 'regex==2025.9.1'
+      - name: PCRE2 differential (real::regex vs PCRE2, arbitrated by re)
+        run: make fuzz-pcre2 CXX=clang++ FUZZ_PCRE2_REQUIRE=1 FUZZ_PCRE2_PYTHON="$RUNNER_TEMP/arbiter/bin/python" FUZZ_PCRE2_SEEDS="1 2 3 4 5 6 7 8" FUZZ_PCRE2_PATTERNS=10000
       # LAST on purpose. Filed units live in fuzz/known-crashes/, out of both timed corpora:
       # a crash in fuzz/corpus is executed by ReadAndExecuteSeedCorpora before the mutation
       # loop, so the smoke died in ~40 ms exploring nothing — and a failed `run:` aborts the

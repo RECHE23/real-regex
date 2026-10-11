@@ -9,6 +9,7 @@ the methodology — that lives in [docs/TESTS.md](../docs/TESTS.md).
 | **Robustness** (`fuzz`) | libFuzzer + ASan/UBSan over the engine's public entry point (`fuzz_target.cpp`) — malformed patterns/inputs must never crash, leak, or UB. Clang-only (libFuzzer). |
 | **Compat differential** (`fuzz-compat`) | `real::compat` vs libstdc++'s `std::regex` (search/replace/iterate/token/match-flags) — the net that has caught every silent divergence in the compat layer; runs in CI. |
 | **RE2 differential** (`fuzz-re2`) | `real::compat::re2` (drop-in) vs true libre2, the oracle. Curated harness with an internal can-fail proof (`REAL_RE2_DIFF_CANFAIL=1`). Needs `pkg-config re2`; skips cleanly when absent. |
+| **PCRE2 differential** (`fuzz-pcre2`) | `real::regex` vs PCRE2 over generated patterns (lookarounds, anchors, Unicode case folding), every divergence arbitrated by `re` in `pcre2_arbiter.py`: PCRE2's own semantics and the documented differences pass, counted; anything else fails. A can-fail run must be refused. Needs `pkg-config libpcre2-8` and Python `regex`; skips cleanly when absent (CI sets `FUZZ_PCRE2_REQUIRE=1`). |
 | **Exhaustive compat routing** (`exhaustive-compat`) | Every pattern up to *k* constructs over a tiny alphabet, crossed with every short input (`sciforge.corpus.exhaustive`) — `real::compat` vs the local `std::regex`, tuned by `EC_K`/`EC_N`. |
 | **Route differential** (`fuzz-routes`) | Every `pike_vm` route against the general VM (the same program, hints blanked; or every route's disable knob set), over generated patterns on tiny alphabets — `search` at every start, every match and group of `find_iter`. Deterministic seeds; a short run in `full-local-gate`, a longer one in CI. |
 | **Fowler/AT&T conformance** (`fowler-compat`) | The three vendored `testregex` corpora (`tests/corpora/fowler`) through `real::compat` vs the local `std`, three-way-arbitrated against the corpus's own POSIX expectation. |
@@ -28,6 +29,7 @@ at the repo root — their sources live in `tests/`.
     make fuzz FUZZ_TIME=60     # libFuzzer robustness, 60s
     make fuzz-compat           # compat vs std::regex differential
     make fuzz-re2              # compat::re2 vs libre2 differential (needs pkg-config re2)
+    make fuzz-pcre2            # real::regex vs PCRE2, arbitrated by re (FUZZ_PCRE2_SEEDS / _PATTERNS)
     make exhaustive-compat     # exhaustive small-space routing check
     make fowler-compat         # Fowler/AT&T POSIX conformance
     make fuzz-routes           # every route vs the general VM (FUZZ_ROUTES_SEEDS="1 2 3" ...)

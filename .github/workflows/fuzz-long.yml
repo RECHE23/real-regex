@@ -118,3 +118,23 @@ jobs:
             ${{ matrix.findings }}/**/slow-unit-*
           if-no-files-found: warn
           retention-days: 90
+
+  # The PCRE2 differential is generated, not mutated: no corpus to keep. Each run takes 100 seeds of its
+  # own (the run number picks them), so every week compares patterns the per-push smoke never drew; a red
+  # prints its seed and mode, and `build/pcre2_differential <seed> 20000 <mode>` reproduces it.
+  pcre2:
+    name: fuzz-long (pcre2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PCRE2 and the arbiter's Python regex
+        run: |
+          sh tools/ci-apt-ubuntu.sh libpcre2-dev pkg-config
+          python3 -m venv "$RUNNER_TEMP/arbiter"
+          "$RUNNER_TEMP/arbiter/bin/pip" install --quiet 'regex==2025.9.1'
+      - name: PCRE2 differential, 100 seeds
+        run: |
+          first=$((GITHUB_RUN_NUMBER * 100))
+          make fuzz-pcre2 CXX=clang++ FUZZ_PCRE2_REQUIRE=1 FUZZ_PCRE2_PYTHON="$RUNNER_TEMP/arbiter/bin/python" \
+            FUZZ_PCRE2_PATTERNS=20000 FUZZ_PCRE2_SEEDS="$(seq "$first" $((first + 99)) | tr '\n' ' ')"

@@ -4,7 +4,7 @@ REAL is tested four ways, each catching what the others cannot:
 
 - **Unit + parity tests** (`tests/`, `bindings/python/tests/`) — behaviour pinned directly, and a differential
   corpus run against Python `re` across every API.
-- **Three differential fuzzers**, one per external engine REAL is measured against:
+- **Four differential fuzzers**, one per external engine REAL is measured against:
   - vs Python **`re`** — `bindings/python/tests/test_differential_fuzz.py`, thousands of random patterns
     (nullable loops, scoped flags) compared to `re`.
   - vs **`std::regex`** — `fuzz/fuzz_compat.cpp` (libFuzzer + ASan/UBSan), the `real::compat` drop-in against
@@ -12,6 +12,12 @@ REAL is tested four ways, each catching what the others cannot:
   - vs the Rust **`regex`** crate — `bindings/rust/fuzz/` (cargo-fuzz, nightly), the `real-regex` crate against
     `regex` on spans / captures / replace / split. The C ABI shim has its own robustness fuzzer
     (`fuzz/fuzz_capi.cpp`).
+  - vs **PCRE2** — `fuzz/pcre2_differential.cpp` (`make fuzz-pcre2`), generated patterns with lookarounds,
+    anchors and Unicode case folding under `search`, `match` and `fullmatch` at every position. PCRE2 is not
+    REAL's reference, so each divergence is arbitrated by `re` (`fuzz/pcre2_arbiter.py`): one where REAL
+    answers as `re` is PCRE2's own semantics; one inside a documented difference (captures in a lookaround,
+    a nullable loop), recognised from the pattern's structure, is counted; anything else fails. Eight seeds
+    per push, a hundred new ones weekly (`fuzz-long.yml`).
 - **An exhaustive small-space enumeration** (`sciforge.corpus.exhaustive`) — every pattern up to *k*
   constructs over a tiny alphabet crossed with every short input, differential against `re`.
 - **Public conformance suites** — the vendored rust-regex and Fowler/AT&T corpora, below.

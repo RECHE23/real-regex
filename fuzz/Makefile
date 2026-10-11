@@ -70,7 +70,7 @@ INCLUDES := -Iinclude
 FUZZ_TIME ?= 30
 FUZZ_DIR  := $(BUILD)/fuzz
 
-.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 exhaustive-compat exhaustive-compat-build exhaustive-compat-space exhaustive-compat-flags exhaustive-compat-flags-build fowler-compat help
+.PHONY: fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-pcre2 exhaustive-compat exhaustive-compat-build exhaustive-compat-space exhaustive-compat-flags exhaustive-compat-flags-build fowler-compat help
 .DEFAULT_GOAL := help
 
 # On macOS with both toolchains installed, a libFuzzer link can fail in two ways and NEITHER error
@@ -165,6 +165,30 @@ fuzz-re2: ## Differential: real::compat::re2 vs true libre2 (needs pkg-config re
 	@echo "fuzz-re2: can-fail inject (must trip, exit 0 in inject mode)"
 	@REAL_RE2_DIFF_CANFAIL=1 $(FUZZ_DIR)/fuzz_re2 >/dev/null
 	@echo "fuzz-re2: PASS (parity green + can-fail intact)"
+
+# Differential: real::regex vs PCRE2 over generated patterns, every divergence arbitrated by `re` (or `regex`
+# for a variable-width lookbehind) in fuzz/pcre2_arbiter.py; see fuzz/pcre2_differential.cpp. Needs
+# pkg-config libpcre2-8 and a Python with `regex` (the gate venv has it). Skips when either is absent, unless
+# FUZZ_PCRE2_REQUIRE=1 (CI), where a missing oracle is a failure. The can-fail run moves REAL's answers and
+# must be refused, so a green says the arbiter can still see a wrong answer.
+FUZZ_PCRE2_SEEDS    ?= 1 2
+FUZZ_PCRE2_PATTERNS ?= 5000
+FUZZ_PCRE2_PYTHON   ?= $(if $(wildcard $(GATE_VENV)/bin/python),$(GATE_VENV)/bin/python,$(PYTHON))
+fuzz-pcre2: ## Differential: real::regex vs PCRE2, arbitrated by re (needs pkg-config libpcre2-8, Python regex)
+	@if ! pkg-config --exists libpcre2-8 || ! $(FUZZ_PCRE2_PYTHON) -c "import regex" 2>/dev/null; then \
+	  echo "fuzz-pcre2: $(if $(FUZZ_PCRE2_REQUIRE),FAIL,SKIP) — needs pkg-config libpcre2-8 and 'regex' in $(FUZZ_PCRE2_PYTHON)"; \
+	  exit $(if $(FUZZ_PCRE2_REQUIRE),1,0); \
+	fi; \
+	mkdir -p $(BUILD) && cd $(ROOT) && \
+	$(CXX) $(CXXSTD) -O2 $(INCLUDES) fuzz/pcre2_differential.cpp $$(pkg-config --cflags --libs libpcre2-8) -o $(BUILD)/pcre2_differential && \
+	echo "fuzz-pcre2: PCRE2 $$(pkg-config --modversion libpcre2-8), seeds $(FUZZ_PCRE2_SEEDS), $(FUZZ_PCRE2_PATTERNS) patterns per seed and mode" && \
+	for seed in $(FUZZ_PCRE2_SEEDS); do for mode in 0 1 2; do \
+	  $(BUILD)/pcre2_differential $$seed $(FUZZ_PCRE2_PATTERNS) $$mode | $(FUZZ_PCRE2_PYTHON) fuzz/pcre2_arbiter.py || exit 1; \
+	done; done; \
+	if PCRE2_DIFF_CANFAIL=1 $(BUILD)/pcre2_differential 1 300 0 | $(FUZZ_PCRE2_PYTHON) fuzz/pcre2_arbiter.py >/dev/null; then \
+	  echo "fuzz-pcre2: FAIL — the can-fail run moved REAL's answers and the arbiter accepted them"; exit 1; \
+	fi; \
+	echo "fuzz-pcre2: PASS (no divergence outside the documented classes; can-fail refused)"
 
 # Exhaustive compat routing check: real::compat vs the LOCAL std::regex over the shared enumerator's
 # small tier-1 space (fuzz/exhaustive_compat.cpp). The oracle is the local std (compat's philosophy). The

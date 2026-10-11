@@ -69,7 +69,7 @@ include mk/help.mk
 
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
-        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate check-commit check-push check-release check-touched-bindings gate-bump gate-doc gate-test clean \
+        lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-pcre2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate check-commit check-push check-release check-touched-bindings gate-bump gate-doc gate-test clean \
         example-check \
         bench-engines bench-percall bench-multipattern bench-duel bench-static bench-matrix matrix-gate bench-ac-gate bench-route-cliff bench-census bench-dfa-census \
         profile-sample profile-callgrind \
@@ -197,7 +197,7 @@ go-%:
 # their root delegations sit with the rest of the tests/ ones, above (near `build`).
 # FUZZ_TIME/FUZZ_DIR/EC_K/EC_N moved into fuzz/Makefile (fuzz-only, nothing else at root
 # consumes them).
-FUZZ_DELEGATED := fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-routes
+FUZZ_DELEGATED := fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-pcre2 fuzz-routes
 $(FUZZ_DELEGATED):
 	@$(MAKE) -C fuzz $@
 
