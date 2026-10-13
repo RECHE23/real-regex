@@ -190,7 +190,9 @@ if(MSVC)
     target_compile_options(real_tests_bin PRIVATE
         /W4 /WX /Zc:__cplusplus /EHsc /utf-8 /wd4268 /wd4269)
 else()
-    target_compile_options(real_tests_bin PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    # -Wshadow is MSVC /W4's C4456/C4457/C4459 (a name hiding a local, a parameter or a global), which a
+    # POSIX-only local gate would otherwise first see in CI.
+    target_compile_options(real_tests_bin PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # Test-only, GCC-only: -Warray-bounds reports a false positive on the
         # small_vec union when its heap state is not visible to the optimizer;
