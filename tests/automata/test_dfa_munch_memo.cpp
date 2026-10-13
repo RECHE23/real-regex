@@ -247,3 +247,65 @@ TEST(dfa_munch_is_final_in_a_terminal_state)
   real::dfa_munch_memo open_memo {open.size()};
   EXPECT(d.munch(open, 0, open_memo).more_text_may_change); // a `z` may still come
 }
+
+// A munch fed its subject in pieces, going on from its progress, answers at every piece what a munch over that
+// prefix answers from scratch, match and promise alike, and reads each byte once: its progress has read exactly
+// the prefix past the start while the munch may still change.
+TEST(a_munch_that_goes_on_from_its_progress_answers_as_one_from_scratch)
+{
+  const std::string_view alphabet {"abc \n"};
+  // Fixed seed: the subjects are part of the test, so a failure names the same one every run.
+  // NOLINTNEXTLINE(cert-msc51-cpp,cert-msc32-c,bugprone-random-generator-seed)
+  std::mt19937                          rng       {20261013U};
+  std::size_t                           compared  {0};
+  std::size_t                           went_on   {0};
+  std::vector<std::vector<std::string>> sets      {rule_sets()};
+  sets.push_back({"a[ab]*c", "[ab]", " "});
+  sets.push_back({"a[^z]*z", "[a-y]+", " "});
+  for (const std::vector<std::string>& sources : sets) {
+    const real::dfa d {build(sources)};
+    for (int round {0}; round < 40; ++round) {
+      std::string text;
+      for (std::size_t n {rng() % 80}; n > 0; --n) {
+        text += round % 3 == 0 ? "ab"[rng() % 2] : alphabet[rng() % alphabet.size()];
+      }
+      const std::size_t        offset {text.empty() ? 0 : rng() % text.size()};
+      real::dfa_munch_progress progress;
+      for (std::size_t end {offset}; end <= text.size(); end += 1 + (rng() % 7)) {
+        const std::string_view prefix {std::string_view {text}.substr(0, end)};
+        const std::size_t      before {progress.read()};
+        real::dfa_munch_memo   memo   {prefix.size()};
+        const real::dfa_munch  fresh  {d.munch(prefix, offset, memo)};
+        const real::dfa_munch  said   {d.munch(prefix, offset, progress)};
+        EXPECT(same(said.match, fresh.match));
+        EXPECT_EQ(said.more_text_may_change, fresh.more_text_may_change);
+        ++compared;
+        went_on += before > 0 ? 1U : 0U;
+        if (!said.more_text_may_change) {
+          EXPECT_EQ(progress.read(), 0U); // final: the progress starts over
+          break;
+        }
+        EXPECT_EQ(progress.read(), end - offset);
+      }
+    }
+  }
+  EXPECT(compared > 400U);
+  EXPECT(went_on > 100U); // with munches that went on from what an earlier one read
+}
+
+// A progress is bound to its DFA, and never reads past a subject shorter than what it has read; reset starts over.
+TEST(a_progress_is_bound_to_its_dfa_and_its_text)
+{
+  const real::dfa          d     {build({"a+", "b"})};
+  const real::dfa          other {build({"a+", "b"})};
+  real::dfa_munch_progress progress;
+  EXPECT(d.munch(std::string_view {"aaa"}, 0, progress).more_text_may_change);
+  EXPECT_EQ(progress.read(), 3U);
+  EXPECT_THROWS((void)other.munch(std::string_view {"aaaa"}, 0, progress), std::invalid_argument);
+  EXPECT_THROWS((void)d.munch(std::string_view {"aa"}, 0, progress), std::invalid_argument);
+  EXPECT_THROWS((void)d.munch(std::string_view {"aaa"}, 4, progress), std::invalid_argument);
+  const real::dfa_munch longer {d.munch(std::string_view {"aaaab"}, 0, progress)};
+  EXPECT(longer.match && longer.match->length == 4U && !longer.more_text_may_change);
+  progress.reset();
+  EXPECT(other.munch(std::string_view {"b"}, 0, progress).match->rule_index == 1U);
+}

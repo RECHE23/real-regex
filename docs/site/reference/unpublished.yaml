@@ -39,6 +39,8 @@ real::dfa_munch:
   publish_all: two public fields -- the match and whether more text may change it
 real::dfa_munch_memo:
   publish_all: per-subject memo; its constructor and transitions() are the whole public surface
+real::dfa_munch_progress:
+  publish_all: per-munch progress; read() and reset() are the whole public surface
 real::dfa_fidelity:
   publish_all: three public fields -- outcome, first unproven rule, witness
 real::fixed_string:

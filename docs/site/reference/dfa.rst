@@ -33,6 +33,10 @@ Interface
    :project: real
    :members:
 
+.. doxygenclass:: real::dfa_munch_progress
+   :project: real
+   :members:
+
 .. doxygenclass:: real::dfa_error
    :project: real
 
@@ -83,7 +87,11 @@ transitions on that input, the replays that mark the dead pairs included, and on
 bit per remembered state per byte of memory (Reps, *Maximal-munch tokenization in linear time*,
 1998). A memo holds and consults nothing until a walk runs more than
 ``dfa_munch_memo::short_stretch`` (32) bytes past its last accept, so a tokenization whose walks
-die near their tokens pays neither the memory nor the lookups. The price is capture-freedom: the result
+die near their tokens pays neither the memory nor the lookups. A lexer whose text
+arrives in pieces munches a token still open at a piece's end once per piece; ``munch(subject,
+offset, progress)`` with a ``dfa_munch_progress`` goes on from where the last piece left the walk, so
+a token of ``n`` bytes costs ``n`` transitions in all, where munching it again from its start costs on
+the order of ``n²/c`` in pieces of ``c`` bytes. The price is capture-freedom: the result
 names the winning rule and its length, nothing inside it. Use
 :doc:`basic_regex` when you need groups, or :doc:`regex_set` when you need
 which-matched without the DFA restrictions. Numbers live in
