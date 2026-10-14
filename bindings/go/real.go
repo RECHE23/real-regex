@@ -37,6 +37,7 @@ import (
 	"errors"
 	"regexp"
 	"runtime"
+	"strconv"
 	"unsafe"
 )
 
@@ -158,6 +159,79 @@ func Compile(pattern string) (*Regexp, error) {
 		&errbuf[0], C.size_t(len(errbuf)), &code)
 	if h == nil {
 		return nil, errors.New(C.GoString(&errbuf[0]))
+	}
+	r := &Regexp{re: h, expr: pattern, ngroups: int(C.real_group_count(h))}
+	r.names = r.readSubexpNames()
+	runtime.SetFinalizer(r, (*Regexp).Close)
+	return r, nil
+}
+
+// Options bounds the resources of one pattern, for a service compiling patterns it did not write.
+// A zero field keeps this build's limit; a field may lower it, never raise it past the build's
+// ceiling, except MaxDFAMemory, which may be raised. A pattern past one fails with an error that
+// wraps ErrLimit.
+type Options struct {
+	MaxProgramSize      int // NFA instructions the compiled program may hold
+	MaxRepeatCount      int // the largest count of a bounded repeat (a{n})
+	MaxGroupCount       int // capture groups
+	MaxNestingDepth     int // group nesting
+	MaxLookaroundLength int // bytes a bounded lookaround may match
+	MaxDFAMemory        int // bytes the search's lazy DFA may cache per direction (default 64 MiB)
+}
+
+// ErrLimit is wrapped by the error CompileWith returns for a pattern past a limit, or for a limit
+// past this build's ceiling: errors.Is(err, ErrLimit) tells it from a malformed pattern.
+var ErrLimit = errors.New("real: past a resource limit")
+
+// limitError carries the engine's message and wraps ErrLimit.
+type limitError struct{ msg string }
+
+func (e *limitError) Error() string { return e.msg }
+func (e *limitError) Unwrap() error { return ErrLimit }
+
+// CompileWith compiles pattern under opts, as Compile does under this build's limits.
+func CompileWith(pattern string, opts Options) (*Regexp, error) {
+	fields := []struct {
+		name  string
+		value int
+	}{{"MaxProgramSize", opts.MaxProgramSize}, {"MaxRepeatCount", opts.MaxRepeatCount},
+		{"MaxGroupCount", opts.MaxGroupCount}, {"MaxNestingDepth", opts.MaxNestingDepth},
+		{"MaxLookaroundLength", opts.MaxLookaroundLength}, {"MaxDFAMemory", opts.MaxDFAMemory}}
+	for _, f := range fields {
+		if f.value < 0 {
+			return nil, errors.New("real: Options." + f.name + " is negative")
+		}
+	}
+	narrow := func(v int) C.int32_t { // past an int32, the engine refuses it as past its ceiling
+		if v > 0x7FFFFFFF {
+			return 0x7FFFFFFF
+		}
+		return C.int32_t(v)
+	}
+	var bound C.real_limits
+	bound.size = C.size_t(unsafe.Sizeof(bound))
+	bound.program_size = C.size_t(opts.MaxProgramSize)
+	bound.repeat_count = narrow(opts.MaxRepeatCount)
+	bound.group_count = narrow(opts.MaxGroupCount)
+	bound.nesting_depth = narrow(opts.MaxNestingDepth)
+	bound.lookaround_length = narrow(opts.MaxLookaroundLength)
+	bound.dfa_memory = C.size_t(opts.MaxDFAMemory)
+	cpat, freePat := cBytes([]byte(pattern))
+	defer freePat()
+	var errbuf [256]C.char
+	var code C.int
+	var pos C.size_t
+	h := C.real_compile_opts((*C.char)(cpat), C.size_t(len(pattern)), dollarEndOnly, &bound,
+		&errbuf[0], C.size_t(len(errbuf)), &code, &pos)
+	if h == nil {
+		msg := C.GoString(&errbuf[0])
+		if pos != sizeMax { // Compile's message: the position, then the cause
+			msg = "regex_error at " + strconv.FormatUint(uint64(pos), 10) + ": " + msg
+		}
+		if code == C.REAL_ERR_LIMIT {
+			return nil, &limitError{msg}
+		}
+		return nil, errors.New(msg)
 	}
 	r := &Regexp{re: h, expr: pattern, ngroups: int(C.real_group_count(h))}
 	r.names = r.readSubexpNames()
