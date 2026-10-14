@@ -294,6 +294,32 @@ TEST(inner_literal_two_run_confirm_fires_on_exactly_the_two_run_shapes)
   EXPECT_EQ(fwd_class("[a-z]+@[a-z]+?"), -1);       // a LAZY suffix does not run to the end of the class run
   EXPECT_EQ(fwd_class(R"(\d{4}-\d{2}-\d{2})"), -1); // fixed counts, not loops
   EXPECT_EQ(fwd_class("[a-z]+"), -1);               // no inner literal
+  // The route keeps 16 literal bytes and ends the literal there: a longer one would leave its rest to the
+  // suffix run.
+  EXPECT(fwd_class("[a-z]+0123456789abcdef[a-z]+") >= 0);
+  EXPECT_EQ(fwd_class("[a-z]+0123456789abcdefg[a-z]+"), -1);
+  EXPECT(fwd_class("([a-z]+)0123456789abcdef([a-z]+)") >= 0); // the groups' saves are no literal bytes
+  EXPECT_EQ(fwd_class("([a-z]+)0123456789abcdefg([a-z]+)"), -1);
+}
+
+TEST(inner_literal_route_matches_the_core_past_the_literal_it_keeps)
+{
+  // `.+a{17}b.+` over a{17}b alone: the route's 16 `a`s recur one byte in, a start lies one `a` back, and the
+  // rest of the literal is no suffix run. No match, on every route.
+  const std::string literal    {std::string(17, 'a') + "b"};
+  const std::string subjects[] {literal, "x" + literal, literal + "y", "x" + literal + "y", literal + literal};
+  real::detail::inner_literal_guard_disabled() = true;
+  for (const std::string& pattern : {".+" + literal + ".+", "[a-z]+" + literal + "[a-z]+", R"(\w+)" + literal + R"(\w+)"}) {
+    for (const std::string& subject : subjects) {
+      real::detail::inner_literal_route_disabled() = true;
+      const auto core {spans(pattern, subject)};
+      real::detail::inner_literal_route_disabled() = false;
+      EXPECT(spans(pattern, subject) == core);
+    }
+  }
+  real::detail::inner_literal_guard_disabled() = false;
+  EXPECT(spans(".+" + literal + ".+", literal).empty());
+  EXPECT_EQ(spans(".+" + literal + ".+", "x" + literal + "y").size(), 1U);
 }
 
 TEST(inner_literal_two_run_confirm_fills_the_same_captures_as_the_core)

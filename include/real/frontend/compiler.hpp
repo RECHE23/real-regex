@@ -431,6 +431,7 @@ namespace real::detail {
             while (tail < prog.code.size() && prog.code[tail].op == opcode::byte) {
               ++tail; // a multi-byte literal is several `byte` ops
             }
+            const std::size_t literal_bytes {tail - lit};
             while (tail < prog.code.size() && prog.code[tail].op == opcode::save) {
               ++tail;
             }
@@ -473,7 +474,10 @@ namespace real::detail {
               for (std::size_t i {0}; i < il.len && tail_covers; ++i) {
                 tail_covers = tail_bytes[il.bytes[i]];
               }
-              if (end + 1 == prog.code.size() && prog.code[end].op == opcode::match
+              // The runs end the literal il.len bytes after the candidate: a literal longer than the hint keeps
+              // (inner_literal_max) would leave its rest to the suffix run (`.+a{17}b.+` matched "a{17}b").
+              const bool whole_literal {literal_bytes == il.len};
+              if (whole_literal && end + 1 == prog.code.size() && prog.code[end].op == opcode::match
                   && (!inner_literal_detail::can_occur_in_prefix(il, run_bytes) || tail_covers)) {
                 prog.hints.il_fwd_class = static_cast<std::int32_t>(prog.code[suffix].arg16);
                 prog.hints.il_fwd_is_cp = tail_cp;
