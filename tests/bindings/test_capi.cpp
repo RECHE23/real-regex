@@ -9,6 +9,7 @@
 #include <real/version.hpp>
 
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -171,6 +172,55 @@ TEST(capi_compile_ex_hands_the_position_over)
   EXPECT(pos == no_pos && code == REAL_ERR_SYNTAX && std::strlen(err) > 0);
   // A NULL err_pos is tolerated, like a NULL code.
   EXPECT(real_compile_ex("(", 1, 0, nullptr, 0, nullptr, nullptr) == nullptr);
+}
+
+// real_compile_opts holds a pattern to its limits and reports one past them as REAL_ERR_LIMIT; a zero field or one
+// past the caller's `size` keeps this build's value; real_compile_ex keeps reporting such a pattern as a syntax error.
+TEST(capi_compile_opts_holds_a_pattern_to_its_limits)
+{
+  char        err[256] = {0};
+  int         code     = 99;
+  std::size_t pos      = 12345;
+  real_regex* plain    = real_compile_opts("a{9}", 4, 0, nullptr, err, sizeof err, &code, &pos);
+  EXPECT(plain != nullptr && code == REAL_ERR_NONE);
+  real_free(plain);
+
+  real_limits bound {};
+  bound.size         = sizeof bound;
+  bound.repeat_count = 5;
+  real_regex* within {real_compile_opts("a{5}", 4, 0, &bound, err, sizeof err, &code, &pos)};
+  EXPECT(within != nullptr && code == REAL_ERR_NONE);
+  real_free(within);
+  EXPECT(real_compile_opts("a{6}", 4, 0, &bound, err, sizeof err, &code, &pos) == nullptr);
+  EXPECT(code == REAL_ERR_LIMIT && std::string(err) == "repetition count too large" && pos == 2); // at the count
+
+  // Only the fields the caller's struct holds are read: one built before repeat_count leaves it at the default.
+  bound.size = offsetof(real_limits, program_size) + sizeof bound.program_size;
+  real_regex* older {real_compile_opts("a{6}", 4, 0, &bound, err, sizeof err, &code, &pos)};
+  EXPECT(older != nullptr && code == REAL_ERR_NONE);
+  real_free(older);
+
+  real_limits past {};
+  past.size              = sizeof past;
+  past.group_count       = 1 << 30;
+  past.nesting_depth     = 2;
+  past.program_size      = 64;
+  past.lookaround_length = 3;
+  past.dfa_memory        = 4096;
+  EXPECT(real_compile_opts("a", 1, 0, &past, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_LIMIT);
+  past.group_count = 1;
+  EXPECT(real_compile_opts("(a)(b)", 6, 0, &past, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_LIMIT);
+  EXPECT(real_compile_opts("(?:(?:(?:a)))", 13, 0, &past, err, sizeof err, &code, &pos) == nullptr
+         && code == REAL_ERR_LIMIT);
+  EXPECT(real_compile_opts("(?=abcd)a", 9, 0, &past, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_LIMIT);
+  real_regex* small {real_compile_opts("(a)", 3, 0, &past, err, sizeof err, &code, &pos)};
+  EXPECT(small != nullptr && code == REAL_ERR_NONE);
+  real_free(small);
+
+  // The older entry points keep their classification: a pattern past the build's ceiling is a syntax error there.
+  EXPECT(real_compile_ex("a{2000}", 7, 0, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_SYNTAX);
+  EXPECT(real_compile_opts("a{2000}", 7, 0, nullptr, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_LIMIT);
+  EXPECT(real_compile_opts("a)", 2, 0, nullptr, err, sizeof err, &code, &pos) == nullptr && code == REAL_ERR_SYNTAX);
 }
 
 TEST(capi_set_compile_ex_hands_the_position_over)

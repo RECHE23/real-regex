@@ -75,7 +75,8 @@ enum {
   REAL_ERR_NONE = 0,        /* success */
   REAL_ERR_SYNTAX = 1,      /* the pattern is malformed */
   REAL_ERR_UNSUPPORTED = 2, /* well-formed but beyond REAL's linear engine (backreference, \p{...}, …) */
-  REAL_ERR_ARGUMENT = 3     /* an argument outside the contract: a flag bit no real::flags value has */
+  REAL_ERR_ARGUMENT = 3,    /* an argument outside the contract: a flag bit no real::flags value has */
+  REAL_ERR_LIMIT = 4        /* well-formed but past a resource limit; only real_compile_opts reports it */
 };
 
 /* Compile [pattern, pattern+len). `flags` is a bitmask of real::flags (icase=1, multiline=2, dotall=4,
@@ -93,6 +94,27 @@ real_regex* real_compile(const char* pattern, size_t len, uint32_t flags,
  * (size_t)-1 too. Everything else is real_compile's contract. */
 real_regex* real_compile_ex(const char* pattern, size_t len, uint32_t flags,
                             char* errbuf, size_t errbuf_len, int* code, size_t* err_pos);
+
+/* The resource limits of one expression (real::limits): a service compiling patterns it did not write lowers
+ * them per call. `size` is sizeof(real_limits) as the caller was built with it; a field past it, or a field
+ * left 0, takes this build's value, so a zero-initialised struct with `size` set means the defaults. A field
+ * may lower its limit, never raise it past this build's ceiling, except dfa_memory (bytes the search's lazy
+ * DFA may cache per direction), which may be raised. */
+typedef struct real_limits {
+  size_t  size;              /* sizeof(real_limits) */
+  size_t  program_size;      /* NFA instructions */
+  int32_t repeat_count;      /* a bounded repeat's count (a{n}) */
+  int32_t group_count;       /* capture groups */
+  int32_t nesting_depth;     /* group nesting */
+  int32_t lookaround_length; /* bytes a bounded lookaround may match */
+  size_t  dfa_memory;        /* bytes the lazy DFA may cache per direction */
+} real_limits;
+
+/* real_compile_ex under `limits` (NULL: this build's). A pattern past a limit, or a limit past this build's
+ * ceiling, fails with REAL_ERR_LIMIT; real_compile and real_compile_ex report such a pattern as
+ * REAL_ERR_SYNTAX, as they always have. Everything else is real_compile_ex's contract. */
+real_regex* real_compile_opts(const char* pattern, size_t len, uint32_t flags, const real_limits* limits,
+                              char* errbuf, size_t errbuf_len, int* code, size_t* err_pos);
 
 /* Number of capture-span slots per match: (capturing groups + 1) for group 0. The `spans` buffer passed to
  * real_iter_next must hold 2 * this many size_t. A NULL `re` returns 0 (invalid handle — zero slots). */

@@ -5,6 +5,7 @@
 #include "real_capi.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <exception>
 #include <new>
@@ -64,6 +65,7 @@ namespace {
     int*    code;
     size_t* err_pos;
     bool    structured;
+    bool    limit_code {false}; //!< Report a pattern past a limit as REAL_ERR_LIMIT (real_compile_opts only).
 
     void begin() const
     {
@@ -90,8 +92,14 @@ namespace {
     {
       // The engine tags whether the pattern is malformed or merely unsupported — pass that through as a
       // code, so the binding never classifies on the message text.
-      fail((e.kind() == real::error_kind::unsupported) ? REAL_ERR_UNSUPPORTED : REAL_ERR_SYNTAX,
-           structured ? e.cause().c_str() : e.what(), e.position());
+      int kind {REAL_ERR_SYNTAX};
+      if (e.kind() == real::error_kind::unsupported) {
+        kind = REAL_ERR_UNSUPPORTED;
+      }
+      else if (e.kind() == real::error_kind::limit && limit_code) {
+        kind = REAL_ERR_LIMIT;
+      }
+      fail(kind, structured ? e.cause().c_str() : e.what(), e.position());
     }
   };
 
@@ -134,7 +142,8 @@ static bool unknown_flags(uint32_t flags)
   return (flags & ~known) != 0U;
 }
 
-static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, const compile_report& report)
+static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, const compile_report& report,
+                               const real::limits* bound = nullptr)
 {
   report.begin();
   if (null_with_length(pattern, len)) {
@@ -146,8 +155,41 @@ static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, 
     return nullptr;
   }
   return guarded_compile(report, [&] {
+    if (bound != nullptr) {
+      return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags), *bound)};
+    }
     return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
   });
+}
+
+//! The real::limits \p given asks for: a field past its `size`, or left 0, at this build's value.
+static real::limits limits_from(const real_limits* given)
+{
+  real::limits bound {};
+  if (given == nullptr) {
+    return bound;
+  }
+  const auto has = [given](size_t end) { return given->size >= end; };
+  if (has(offsetof(real_limits, program_size) + sizeof(given->program_size)) && given->program_size != 0) {
+    bound.program_size = given->program_size;
+  }
+  if (has(offsetof(real_limits, repeat_count) + sizeof(given->repeat_count)) && given->repeat_count != 0) {
+    bound.repeat_count = given->repeat_count;
+  }
+  if (has(offsetof(real_limits, group_count) + sizeof(given->group_count)) && given->group_count != 0) {
+    bound.group_count = given->group_count;
+  }
+  if (has(offsetof(real_limits, nesting_depth) + sizeof(given->nesting_depth)) && given->nesting_depth != 0) {
+    bound.nesting_depth = given->nesting_depth;
+  }
+  if (has(offsetof(real_limits, lookaround_length) + sizeof(given->lookaround_length))
+      && given->lookaround_length != 0) {
+    bound.lookaround_length = given->lookaround_length;
+  }
+  if (has(offsetof(real_limits, dfa_memory) + sizeof(given->dfa_memory)) && given->dfa_memory != 0) {
+    bound.dfa_memory = given->dfa_memory;
+  }
+  return bound;
 }
 
 uint32_t real_abi_version(void)
@@ -170,6 +212,13 @@ real_regex* real_compile_ex(const char* pattern, size_t len, uint32_t flags,
                             char* errbuf, size_t errbuf_len, int* code, size_t* err_pos)
 {
   return compile_one(pattern, len, flags, {errbuf, errbuf_len, code, err_pos, true});
+}
+
+real_regex* real_compile_opts(const char* pattern, size_t len, uint32_t flags, const real_limits* limits,
+                              char* errbuf, size_t errbuf_len, int* code, size_t* err_pos)
+{
+  const real::limits bound {limits_from(limits)};
+  return compile_one(pattern, len, flags, {errbuf, errbuf_len, code, err_pos, true, true}, &bound);
 }
 
 size_t real_group_count(const real_regex* re)

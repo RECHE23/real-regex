@@ -10,6 +10,7 @@ ENUM REAL_ERR_NONE=0
 ENUM REAL_ERR_SYNTAX=1
 ENUM REAL_ERR_UNSUPPORTED=2
 ENUM REAL_ERR_ARGUMENT=3
+ENUM REAL_ERR_LIMIT=4
 ENUM REAL_MODE_SEARCH=0
 ENUM REAL_MODE_MATCH=1
 ENUM REAL_MODE_FULLMATCH=2
@@ -29,6 +30,7 @@ FN uint32_t real_abi_version(void)
 FN const char* real_version(void)
 FN real_regex* real_compile(const char*,size_t,uint32_t,char*,size_t,int*)
 FN real_regex* real_compile_ex(const char*,size_t,uint32_t,char*,size_t,int*,size_t*)
+FN real_regex* real_compile_opts(const char*,size_t,uint32_t,const real_limits*,char*,size_t,int*,size_t*)
 FN size_t real_group_count(const real_regex*)
 FN size_t real_group_name(const real_regex*,size_t,char*,size_t)
 FN void real_free(real_regex*)
