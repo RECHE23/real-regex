@@ -27,9 +27,21 @@ enum RealRegex {}
 enum RealIter {}
 enum RealRegexSet {}
 
+// real_limits (real_capi.h), versioned by its first field.
+#[repr(C)]
+struct RealLimits {
+    size: usize,
+    program_size: usize,
+    repeat_count: i32,
+    group_count: i32,
+    nesting_depth: i32,
+    lookaround_length: i32,
+    dfa_memory: usize,
+}
+
 extern "C" {
-    fn real_compile_ex(pattern: *const c_char, len: usize, flags: u32,
-                       errbuf: *mut c_char, errbuf_len: usize, code: *mut i32, err_pos: *mut usize) -> *mut RealRegex;
+    fn real_compile_opts(pattern: *const c_char, len: usize, flags: u32, limits: *const RealLimits,
+                         errbuf: *mut c_char, errbuf_len: usize, code: *mut i32, err_pos: *mut usize) -> *mut RealRegex;
     fn real_group_count(re: *const RealRegex) -> usize;
     fn real_group_name(re: *const RealRegex, group: usize, buf: *mut c_char, buflen: usize) -> usize;
     fn real_free(re: *mut RealRegex);
@@ -53,6 +65,9 @@ extern "C" {
 
 const DIVERGENCES_URL: &str = "https://github.com/RECHE23/real-regex/blob/main/docs/COMPATIBILITY.md";
 const REAL_ERR_UNSUPPORTED: i32 = 2; // must match REAL_ERR_UNSUPPORTED in real_capi.h
+const REAL_ERR_LIMIT: i32 = 4; // must match REAL_ERR_LIMIT in real_capi.h
+/// Bytes one compiled instruction takes: [`RegexBuilder::size_limit`] divides its bytes by it.
+pub const INSTRUCTION_BYTES: usize = 12;
 const NO_POSITION: usize = usize::MAX; // the _ex entry points' (size_t)-1: a failure with no pattern offset
 // real::flags::dollar_endonly — `$` (no multiline) matches only at the very end, never before a final `\n`.
 // The crate compiles every pattern with it, so `$` carries rust's `\z` semantics instead of Python re's.
@@ -70,6 +85,10 @@ pub enum Error {
     /// crate is linear too, so it refuses a backreference exactly as REAL does. The hint sells a
     /// remedy only where one exists.
     Unsupported { construct: String, hint: String },
+    /// The pattern is past a resource limit: the [`RegexBuilder::size_limit`] (the bytes it was given), or one
+    /// of the engine's own (a program, a repeat count, the groups or the nesting past this build's), as the
+    /// regex crate reports a program past its size limit.
+    CompiledTooBig(usize),
 }
 
 impl Error {
@@ -81,9 +100,11 @@ impl Error {
     // Build an Error from what the C ABI's _ex entry points report: the bare cause, the structured code
     // (REAL_ERR_*) and the byte position ((size_t)-1 when the failure has none). Nothing is read out of the
     // message text, so a reworded engine message changes neither the classification nor the position.
-    fn from_engine(msg: String, code: i32, pos: usize, rescue: Rescue) -> Error {
+    fn from_engine(msg: String, code: i32, pos: usize, rescue: Rescue, size_limit: usize) -> Error {
         if code == REAL_ERR_UNSUPPORTED {
             unsupported_construct(&msg, rescue)
+        } else if code == REAL_ERR_LIMIT {
+            Error::CompiledTooBig(size_limit)
         } else {
             Error::Syntax { msg, pos: (pos != NO_POSITION).then_some(pos) }
         }
@@ -96,6 +117,7 @@ impl std::fmt::Display for Error {
             Error::Syntax { msg, pos: Some(p) } => write!(f, "syntax error at {p}: {msg}"),
             Error::Syntax { msg, pos: None } => write!(f, "syntax error: {msg}"),
             Error::Unsupported { construct, hint } => write!(f, "{construct} ({hint})"),
+            Error::CompiledTooBig(limit) => write!(f, "compiled regex exceeds a resource limit ({limit} bytes)"),
         }
     }
 }
@@ -290,22 +312,44 @@ fn nested_class_syntax(pattern: &[u8]) -> Option<&'static str> {
     None
 }
 
-// Compile a pattern (as raw bytes) and precompute its group names. Shared by the str and bytes APIs.
-fn compile_handle(pattern: &[u8], flags: u32) -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
+// The limits a RegexBuilder sets, in bytes; None keeps the engine's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Limits {
+    size: Option<usize>,
+    dfa_size: Option<usize>,
+}
+
+// The program size limit the default compile has, in bytes, which CompiledTooBig reports without a size_limit.
+const DEFAULT_SIZE_LIMIT: usize = 262_144 * INSTRUCTION_BYTES;
+
+// Compile a pattern (as raw bytes) under a builder's limits (the defaults: the engine's) and precompute its group
+// names. Shared by the str and bytes APIs.
+fn compile_handle_within(pattern: &[u8], flags: u32, limits: Limits)
+                         -> Result<(*mut RealRegex, usize, Arc<GroupInfo>), Error> {
     if let Some(construct) = nested_class_syntax(pattern) {
         return Err(unsupported_construct(construct, rescue_for(pattern))); // rust-only class syntax REAL would parse differently
     }
     let mut err = [0u8; 256];
     let mut code: i32 = 0;
     let mut pos: usize = NO_POSITION;
+    // A size limit under one instruction is one instruction, as the regex crate refuses everything there too.
+    let bound = RealLimits {
+        size: std::mem::size_of::<RealLimits>(),
+        program_size: limits.size.map_or(0, |bytes| (bytes / INSTRUCTION_BYTES).max(1)),
+        repeat_count: 0,
+        group_count: 0,
+        nesting_depth: 0,
+        lookaround_length: 0,
+        dfa_memory: limits.dfa_size.map_or(0, |bytes| bytes.max(1)),
+    };
     let handle = unsafe {
-        real_compile_ex(pattern.as_ptr() as *const c_char, pattern.len(), flags | DOLLAR_ENDONLY,
-                        err.as_mut_ptr() as *mut c_char, err.len(), &mut code, &mut pos)
+        real_compile_opts(pattern.as_ptr() as *const c_char, pattern.len(), flags | DOLLAR_ENDONLY, &bound,
+                          err.as_mut_ptr() as *mut c_char, err.len(), &mut code, &mut pos)
     };
     if handle.is_null() {
         let end = err.iter().position(|&b| b == 0).unwrap_or(err.len());
         let msg = String::from_utf8_lossy(&err[..end]).into_owned();
-        return Err(Error::from_engine(msg, code, pos, rescue_for(pattern)));
+        return Err(Error::from_engine(msg, code, pos, rescue_for(pattern), limits.size.unwrap_or(DEFAULT_SIZE_LIMIT)));
     }
     let ngroups = unsafe { real_group_count(handle) };
     let mut names = Vec::with_capacity(ngroups);
@@ -373,7 +417,11 @@ impl Regex {
     /// Compile with a `real::flags` bitmask (icase=1, multiline=2, dotall=4, bytes=8, verbose=16, ecma=32,
     /// ascii=64). Prefer [`RegexBuilder`] for readable options.
     pub fn with_flags(pattern: &str, flags: u32) -> Result<Regex, Error> {
-        let (handle, ngroups, groups) = compile_handle(pattern.as_bytes(), flags)?;
+        Regex::with_flags_within(pattern, flags, Limits::default())
+    }
+
+    fn with_flags_within(pattern: &str, flags: u32, limits: Limits) -> Result<Regex, Error> {
+        let (handle, ngroups, groups) = compile_handle_within(pattern.as_bytes(), flags, limits)?;
         Ok(Regex {
             handle,
             ngroups,
@@ -747,7 +795,7 @@ impl RegexSet {
             let msg = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }
                 .to_string_lossy()
                 .into_owned();
-            return Err(Error::from_engine(msg, code, pos, Rescue::NoFallbackHere));
+            return Err(Error::from_engine(msg, code, pos, Rescue::NoFallbackHere, DEFAULT_SIZE_LIMIT));
         }
         Ok(RegexSet {
             handle,
@@ -1412,6 +1460,7 @@ const FLAG_ASCII: u32 = 64;
 pub struct RegexBuilder {
     pattern: String,
     flags: u32,
+    limits: Limits,
     #[cfg(feature = "fallback")]
     fallback: bool,
 }
@@ -1422,6 +1471,7 @@ impl RegexBuilder {
         RegexBuilder {
             pattern: pattern.to_string(),
             flags: 0,
+            limits: Limits::default(),
             #[cfg(feature = "fallback")]
             fallback: false,
         }
@@ -1467,15 +1517,25 @@ impl RegexBuilder {
         self.set(FLAG_ASCII, !yes)
     }
 
-    /// Accepted for API compatibility with `regex`; REAL enforces its own fixed complexity caps, so this is a
-    /// no-op (there is no per-pattern memory budget to set).
-    pub fn size_limit(&mut self, _bytes: usize) -> &mut RegexBuilder {
+    /// The most bytes the compiled program may take, as `regex`'s `size_limit`: [`INSTRUCTION_BYTES`] each
+    /// instruction. A pattern past it fails with [`Error::CompiledTooBig`], which no fallback delegates. It may
+    /// lower the engine's own limit (262 144 instructions), never raise it.
+    pub fn size_limit(&mut self, bytes: usize) -> &mut RegexBuilder {
+        self.limits.size = Some(bytes);
+        self
+    }
+
+    /// The most bytes the search's lazy DFA may cache per direction, as `regex`'s `dfa_size_limit`: past them
+    /// the search flushes the cache and, if it keeps flushing, finishes on the VM, still linear and exact.
+    /// The default is 64 MiB.
+    pub fn dfa_size_limit(&mut self, bytes: usize) -> &mut RegexBuilder {
+        self.limits.dfa_size = Some(bytes);
         self
     }
 
     /// Compile the configured pattern.
     pub fn build(&self) -> Result<Regex, Error> {
-        match Regex::with_flags(&self.pattern, self.flags) {
+        match Regex::with_flags_within(&self.pattern, self.flags, self.limits) {
             Ok(re) => Ok(re),
             Err(e) => {
                 #[cfg(feature = "fallback")]
@@ -1697,8 +1757,8 @@ impl<'t> Iterator for SplitN<'_, 't> {
 /// whole match; spans are byte offsets.
 pub mod bytes {
     use super::{
-        compile_handle, real_can_extend, real_find_iter, real_find_iter_at, real_free, real_left_context,
-        CaptureLocations, Error,
+        compile_handle_within, real_can_extend, real_find_iter, real_find_iter_at, real_free, real_left_context,
+        CaptureLocations, Error, Limits,
         GroupInfo, RawSpans, RealRegex, SlotStore, FLAG_ASCII, FLAG_DOTALL, FLAG_ICASE,
         FLAG_MULTILINE, FLAG_VERBOSE,
     };
@@ -1729,7 +1789,11 @@ pub mod bytes {
 
         /// Compile a raw-byte pattern with extra `real::flags` (byte mode is always on).
         pub fn with_flags(pattern: &[u8], flags: u32) -> Result<Regex, Error> {
-            let (handle, ngroups, groups) = compile_handle(pattern, flags | FLAG_BYTES)?;
+            Regex::with_flags_within(pattern, flags, Limits::default())
+        }
+
+        fn with_flags_within(pattern: &[u8], flags: u32, limits: Limits) -> Result<Regex, Error> {
+            let (handle, ngroups, groups) = compile_handle_within(pattern, flags | FLAG_BYTES, limits)?;
             Ok(Regex { handle, ngroups, pattern: pattern.to_vec(), groups })
         }
 
@@ -2237,12 +2301,13 @@ pub mod bytes {
     pub struct RegexBuilder {
         pattern: Vec<u8>,
         flags: u32,
+        limits: Limits,
     }
 
     impl RegexBuilder {
         /// Start building from `pattern`.
         pub fn new(pattern: &str) -> RegexBuilder {
-            RegexBuilder { pattern: pattern.as_bytes().to_vec(), flags: 0 }
+            RegexBuilder { pattern: pattern.as_bytes().to_vec(), flags: 0, limits: Limits::default() }
         }
         fn set(&mut self, bit: u32, yes: bool) -> &mut RegexBuilder {
             if yes { self.flags |= bit } else { self.flags &= !bit }
@@ -2258,11 +2323,20 @@ pub mod bytes {
         pub fn ignore_whitespace(&mut self, yes: bool) -> &mut RegexBuilder { self.set(FLAG_VERBOSE, yes) }
         /// Unicode mode (`false` restricts `\w \d \s` to ASCII).
         pub fn unicode(&mut self, yes: bool) -> &mut RegexBuilder { self.set(FLAG_ASCII, !yes) }
-        /// Accepted for API compatibility; a no-op (REAL has fixed complexity caps).
-        pub fn size_limit(&mut self, _bytes: usize) -> &mut RegexBuilder { self }
+        /// The most bytes the compiled program may take, as the str builder's [`size_limit`](crate::RegexBuilder::size_limit).
+        pub fn size_limit(&mut self, bytes: usize) -> &mut RegexBuilder {
+            self.limits.size = Some(bytes);
+            self
+        }
+        /// The most bytes the lazy DFA may cache per direction, as the str builder's
+        /// [`dfa_size_limit`](crate::RegexBuilder::dfa_size_limit).
+        pub fn dfa_size_limit(&mut self, bytes: usize) -> &mut RegexBuilder {
+            self.limits.dfa_size = Some(bytes);
+            self
+        }
         /// Compile.
         pub fn build(&self) -> Result<Regex, Error> {
-            Regex::with_flags(&self.pattern, self.flags)
+            Regex::with_flags_within(&self.pattern, self.flags, self.limits)
         }
     }
 }
