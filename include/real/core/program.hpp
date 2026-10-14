@@ -153,7 +153,9 @@ namespace real {
     std::int32_t lookaround_length; //!< Bytes a bounded lookaround may match.
     std::size_t  dfa_memory;        //!< Bytes the lazy DFA may cache per direction (64 MiB by default).
 
-    //! \brief This build's limits: its ceilings, and the default DFA memory.
+    /*!
+     * \brief This build's limits: its ceilings, and the default DFA memory.
+     */
     constexpr limits() noexcept
       : program_size {detail::max_program_size},
         repeat_count {detail::max_repeat_count},
