@@ -2,6 +2,31 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.13
+
+10.13 (**resource limits set per pattern, in every binding**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
+`2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode**: no route changed. The lazy DFA's memory moved from one process-wide budget to each
+  regex's immutables (`limits::dfa_memory`, the same 64 MiB by default), read where the budget was read:
+  `sizeof(real::regex)` 1952 → 1968 bytes on arm64, the immutables 1416 → 1424; the fixed-cost stamp
+  (`tools/fixed_cost_stamps.json`) records both and no per-call count left its tolerance.
+- **§B**, `bench.py` median of three on arm64 (2026-10-14, tree `492e0614`) against the stamped table: every
+  ratio within 1.9 % (`literal · hit` −1.9 %, `literal · miss` −1.5 %, `words · findall @1MB` −1.6 %), but the
+  known-unstable `sub · dates with refs` (89.8× / 48.9× / 91.7×).
+- **Not in a table**: the limits' checks run at compilation, not in a search.
+The multi-pattern section keeps its `600b0fb` stamp.
+
+## v2026.10.12
+
+10.12 (**a streamed token read once, a wide code-point shape kept on its walk**): **THE TABLES ARE NOT RE-RUN, AND
+THE STAMP STAYS AT `2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode**: one route changed: a fixed code-point shape wider than 255 keeps the inner-literal walk
+  (9a34aea0) where it fell to the Pike VM; no benchmarked pattern is that wide. `dfa::munch` without a progress
+  argument is unchanged.
+- **§B**: no Python-path change; measured with 10.13 (above).
+- **Not in a table**: `dfa_munch_progress` (SciLex's stream), and the C ABI's refusal of an unknown flag bit.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.11
 
 10.11 (**prefilters that keep their filter: a far rare byte, a case-insensitive literal; a wide fixed shape on the
