@@ -1943,6 +1943,7 @@ namespace real::detail {
    * \brief Compiles \p tree to an NFA program (convenience over \ref compiler).
    * \param[in] tree The parsed AST.
    * \param[in] compile_flags The effective compilation flags.
+   * \param[in] bound The expression's limits (\ref real::limits).
    * \return The compiled \ref dynamic_program.
    * \throws real::regex_error if the program exceeds \ref max_program_size.
    */

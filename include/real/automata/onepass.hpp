@@ -1015,6 +1015,7 @@ namespace real::detail {
      * The cache body is never transferred — it is a pure runtime accelerator and cheap to rebuild — so the
      * copy starts with \ref built_for and \ref rows_for null and rebuilds on its own first routed search. Its
      * \ref dfa_memory, a limit and not a cache, is kept.
+     * \param[in] other The cache copied.
      */
     regex_immutables(const regex_immutables& other) noexcept
       : rows_for {nullptr}, built_for {nullptr}, dfa_memory {other.dfa_memory}
@@ -1022,6 +1023,7 @@ namespace real::detail {
 
     /*!
      * \brief Moves as an empty cache, for the same reason as the copy constructor.
+     * \param[in] other The cache moved from; it keeps its own state.
      */
     regex_immutables(regex_immutables&& other) noexcept
       : rows_for {nullptr}, built_for {nullptr}, dfa_memory {other.dfa_memory}
@@ -1053,7 +1055,9 @@ namespace real::detail {
      *
      * The destination's program is already the new one by the time storage assignment reaches here, so this
      * cannot rebuild from the source's program and must not inherit its built state: clearing
-     * \ref built_for forces `pike_vm`'s `ensure_immutables` to rebuild. Self-assignment-safe.
+     * \ref built_for forces `pike_vm`'s `ensure_immutables` to rebuild. Self-assignment-safe. \ref dfa_memory, a
+     * limit, is \p other's.
+     * \param[in] other The cache assigned from.
      * \return `*this`.
      */
     // NOLINTNEXTLINE(cert-oop54-cpp): deliberate non-copy of members, per the note above.
@@ -1066,6 +1070,7 @@ namespace real::detail {
 
     /*!
      * \brief Invalidates as the copy assignment does, and for the same reason.
+     * \param[in] other The cache assigned from.
      * \return `*this`.
      */
     // NOLINTNEXTLINE(cert-oop54-cpp)

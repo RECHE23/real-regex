@@ -1053,9 +1053,8 @@ namespace real {
        * \brief Parses and compiles \p pattern with flags \p compile_flags.
        * \param[in] pattern       The pattern text.
        * \param[in] compile_flags The requested flags (merged with a leading `(?imsxaU)` / `(?flags-flags)` group).
-       * \param[in] bound         The expression's limits (\ref real::limits).
        * \return A populated storage object.
-       * \throws real::regex_error on an invalid or over-limit pattern, or limits past this build's ceilings.
+       * \throws real::regex_error on an invalid or over-limit pattern.
        */
       static constexpr dynamic_storage compile(std::string_view pattern,
                                                flags            compile_flags)

@@ -302,6 +302,7 @@ namespace real::detail {
      * \param[in] pattern      The pattern text (borrowed, must outlive use).
      * \param[in] initial_flags Flags from the constructor; only `verbose` affects
      *                          parsing (a leading `(?x)` can add it too).
+     * \param[in] bound         The expression's limits on repeats, groups and nesting.
      */
     constexpr explicit parser(std::string_view pattern,
                               flags            initial_flags = flags::none,
@@ -2664,6 +2665,7 @@ namespace real::detail {
    * \brief Parses \p pattern into an \ref ast (convenience over \ref parser).
    * \param[in] pattern       The pattern text.
    * \param[in] initial_flags Constructor flags; only `verbose` affects parsing.
+   * \param[in] bound         The expression's limits (\ref real::limits).
    * \return The parsed AST.
    * \throws real::regex_error on unsupported or malformed syntax.
    */
@@ -2677,7 +2679,7 @@ namespace real::detail {
   /*!
    * \brief Refuses limits past this build's ceilings, or under one (\ref real::limits).
    * \param[in] bound The limits.
-   * \throws real::regex_error (\ref error_kind::limit) naming the first such limit.
+   * \throws real::regex_error (`error_kind::limit`) naming the first such limit.
    */
   inline void check_limits(const limits& bound)
   {
