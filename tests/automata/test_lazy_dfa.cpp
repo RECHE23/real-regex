@@ -837,6 +837,7 @@ TEST(search_dfas_take_the_regexs_memory_limit)
   real::detail::tally(real::detail::counter::dfa_quits) = 0;
   EXPECT_EQ(whole.search(text).matched(), want.matched());
   EXPECT_EQ(real::detail::tally(real::detail::counter::dfa_quits).load(), 0U); // the default, beside it
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): the copy is what this checks
   const real::regex copy {small};
   real::detail::tally(real::detail::counter::dfa_quits) = 0;
   EXPECT_EQ(copy.search(text).matched(), want.matched());
