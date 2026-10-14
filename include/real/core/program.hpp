@@ -146,12 +146,16 @@ namespace real {
    */
   struct limits
   {
+    // The defaults are set by the constructor, not by initializers here: the published reference renders an
+    // initializer, and these name detail:: constants it does not publish.
+    // NOLINTBEGIN(cppcoreguidelines-use-default-member-init,modernize-use-default-member-init)
     std::size_t  program_size;      //!< NFA instructions.
     std::int32_t repeat_count;      //!< A bounded repeat's count (`a{n}`).
     std::int32_t group_count;       //!< Capture groups.
     std::int32_t nesting_depth;     //!< Group nesting.
     std::int32_t lookaround_length; //!< Bytes a bounded lookaround may match.
     std::size_t  dfa_memory;        //!< Bytes the lazy DFA may cache per direction (64 MiB by default).
+    // NOLINTEND(cppcoreguidelines-use-default-member-init,modernize-use-default-member-init)
 
     /*!
      * \brief This build's limits: its ceilings, and the default DFA memory.
