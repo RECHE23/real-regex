@@ -1058,12 +1058,40 @@ namespace real {
        * \throws real::regex_error on an invalid or over-limit pattern, or limits past this build's ceilings.
        */
       static constexpr dynamic_storage compile(std::string_view pattern,
-                                               flags            compile_flags,
-                                               const limits&    bound = {})
+                                               flags            compile_flags)
       {
-        if (!std::is_constant_evaluated()) {
-          detail::check_limits(bound);
-        }
+        return compile_within(pattern, compile_flags, limits {});
+      }
+
+      /*!
+       * \brief \ref compile under \p bound, limits lower than this build's (\ref real::limits).
+       * \param[in] pattern       The pattern text.
+       * \param[in] compile_flags The requested flags.
+       * \param[in] bound         The expression's limits, \ref real::limits::dfa_memory included.
+       * \return A populated storage object.
+       * \throws real::regex_error on an invalid or over-limit pattern, or limits past this build's ceilings.
+       */
+      static dynamic_storage compile(std::string_view pattern,
+                                     flags            compile_flags,
+                                     const limits&    bound)
+      {
+        detail::check_limits(bound);
+        dynamic_storage out {compile_within(pattern, compile_flags, bound)};
+        out.immut_.dfa_memory = bound.dfa_memory;
+        return out;
+      }
+
+      /*!
+       * \brief The parse and the compilation of \ref compile, held to \p bound's pattern limits.
+       * \param[in] pattern       The pattern text.
+       * \param[in] compile_flags The requested flags.
+       * \param[in] bound         The limits, already checked against this build's.
+       * \return A populated storage object, its search DFAs at the default memory.
+       */
+      static constexpr dynamic_storage compile_within(std::string_view pattern,
+                                                      flags            compile_flags,
+                                                      const limits&    bound)
+      {
         const ast   tree      {detail::parse(pattern, compile_flags, bound)};
         const flags effective {compile_flags | tree.inline_flags};
         // The compiler gets `effective` (additions only): the parser already applied any `(?-flags)` removal

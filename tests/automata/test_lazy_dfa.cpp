@@ -819,21 +819,33 @@ TEST(lazy_dfas_answer_on_a_zero_byte_budget)
   EXPECT(rev_none.byte_flushes() > 0U);
 }
 
-// The search DFAs are built with the process budget: a small one makes the scan flush until it quits, and the
-// VM answers the same.
-TEST(search_dfas_take_the_byte_budget)
+// The search DFAs take their regex's memory limit (real::limits::dfa_memory): a small one makes the scan flush until
+// it quits, and the VM answers the same; a regex beside it keeps the default, and a copy keeps its own.
+TEST(search_dfas_take_the_regexs_memory_limit)
 {
   const std::string pattern {words_then_digit(300, 8)};
   const std::string text    {random_letters(32768) + "7"};
   const real::regex whole   {pattern};
   const auto        want    {whole.search(text)};
-  real::detail::lazy_dfa_byte_budget() = std::size_t {8} << 10U;
-  real::detail::tally(real::detail::counter::dfa_quits)            = 0;
-  const real::regex small {pattern};
-  const auto        got   {small.search(text)};
-  real::detail::lazy_dfa_byte_budget() = real::detail::lazy_dfa_default_byte_budget;
+  real::limits      bound   {};
+  bound.dfa_memory = std::size_t {8} << 10U;
+  const real::regex small   {pattern, real::flags::none, bound};
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
+  const auto got            {small.search(text)};
   EXPECT_EQ(got.matched(), want.matched());
   EXPECT(real::detail::tally(real::detail::counter::dfa_quits).load() > 0U);
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
+  EXPECT_EQ(whole.search(text).matched(), want.matched());
+  EXPECT_EQ(real::detail::tally(real::detail::counter::dfa_quits).load(), 0U); // the default, beside it
+  const real::regex copy {small};
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
+  EXPECT_EQ(copy.search(text).matched(), want.matched());
+  EXPECT(real::detail::tally(real::detail::counter::dfa_quits).load() > 0U);   // the copy keeps its limit
+  real::regex assigned {"x"};
+  assigned = small;
+  real::detail::tally(real::detail::counter::dfa_quits) = 0;
+  EXPECT_EQ(assigned.search(text).matched(), want.matched());
+  EXPECT(real::detail::tally(real::detail::counter::dfa_quits).load() > 0U);   // and so does an assignment
 }
 
 namespace {
