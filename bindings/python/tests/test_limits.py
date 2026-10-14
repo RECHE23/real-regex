@@ -58,6 +58,7 @@ class Limits(unittest.TestCase):
                 real.Limits(repeat_count=value)
         self.assertRefused("a", real.Limits(repeat_count=5000))
         self.assertRefused("a", real.Limits(group_count=1 << 40))
+        self.assertRefused("a", real.Limits(program_size=1 << 40))  # past a 32-bit size too: never read as 0
         self.assertIsNotNone(real.compile("a", limits=real.Limits(dfa_memory=1 << 34)))  # no ceiling
         with self.assertRaises(TypeError):
             real.compile("a", limits=(1, 2))

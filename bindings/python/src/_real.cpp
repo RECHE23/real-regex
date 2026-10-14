@@ -29,6 +29,7 @@
 #include <memory>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <optional>
 #include <string>
@@ -3021,24 +3022,31 @@ bool limits_from(PyObject* given, std::optional<real::limits>* out)
         PyErr_SetString(PyExc_TypeError, "limits must be None or a tuple of six ints");
         return false;
     }
-    std::size_t values[6] {};
+    unsigned long long values[6] {};
     for (Py_ssize_t i = 0; i < 6; ++i) {
-        const unsigned long long value {PyLong_AsUnsignedLongLong(PyTuple_GetItem(given, i))};
-        if (value == static_cast<unsigned long long>(-1) && PyErr_Occurred() != nullptr) {
+        values[i] = PyLong_AsUnsignedLongLong(PyTuple_GetItem(given, i));
+        if (values[i] == static_cast<unsigned long long>(-1) && PyErr_Occurred() != nullptr) {
             return false;
         }
-        values[i] = static_cast<std::size_t>(value);
     }
     real::limits bound {};
-    const auto narrow = [](std::size_t value, std::int32_t fallback) {
+    // Past what the field holds, the most it holds: past every ceiling, so refused, and the DFA's memory, which has
+    // none, as much as an address reaches. Cut to the field's width instead, a 32-bit build read 1 << 40 as 0, the
+    // build's own value.
+    const auto narrow = [](unsigned long long value, std::int32_t fallback) {
         return value == 0 ? fallback : value > 0x7FFFFFFFU ? std::int32_t {0x7FFFFFFF} : static_cast<std::int32_t>(value);
     };
-    bound.program_size      = values[0] == 0 ? bound.program_size : values[0];
+    const auto size = [](unsigned long long value, std::size_t fallback) {
+        return value == 0 ? fallback
+                          : value > std::numeric_limits<std::size_t>::max() ? std::numeric_limits<std::size_t>::max()
+                                                                           : static_cast<std::size_t>(value);
+    };
+    bound.program_size      = size(values[0], bound.program_size);
     bound.repeat_count      = narrow(values[1], bound.repeat_count);
     bound.group_count       = narrow(values[2], bound.group_count);
     bound.nesting_depth     = narrow(values[3], bound.nesting_depth);
     bound.lookaround_length = narrow(values[4], bound.lookaround_length);
-    bound.dfa_memory        = values[5] == 0 ? bound.dfa_memory : values[5];
+    bound.dfa_memory        = size(values[5], bound.dfa_memory);
     *out = bound;
     return true;
 }
