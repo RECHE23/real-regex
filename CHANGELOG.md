@@ -2,6 +2,14 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.15
+
+10.15 (**a wrong match around a literal longer than 16 bytes**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
+`2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode / §B**: no row's pattern has a literal past 16 bytes between two class runs, the only shape
+  whose route changed (it is now confirmed by the engine, 7a669f9b).
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.14
 
 10.14 (**10.13, never published, and a 32-bit Python limit fix**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS
