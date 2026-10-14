@@ -38,6 +38,7 @@ Functions
 .. autofunction:: get_include
 .. autofunction:: get_config
 .. autoexception:: error
+.. autoclass:: Limits
 
 Pattern
 -------

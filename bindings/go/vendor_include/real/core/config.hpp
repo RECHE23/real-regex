@@ -117,26 +117,4 @@ namespace real::detail {
                 "REAL_MAX_DFA_STATES may only lower the default, to 2 or more");
 } // namespace real::detail
 
-namespace real {
-
-  /*!
-   * \brief The resource limits of one expression, for a service that compiles patterns it did not write: each may
-   *        be lowered for the patterns of one call, none raised past this build's ceiling (`REAL_MAX_*`), and
-   *        the defaults are those ceilings. A pattern past one is refused with `error_kind::limit`.
-   *
-   * `dfa_memory` bounds what the search's lazy DFA may cache for this expression, per direction: past it the
-   * cache flushes, and a search that keeps flushing finishes on the VM, still linear and still exact. It has no
-   * ceiling, and may be raised.
-   */
-  struct limits
-  {
-    std::size_t  program_size      {detail::max_program_size};      //!< NFA instructions.
-    std::int32_t repeat_count      {detail::max_repeat_count};      //!< A bounded repeat's count (`a{n}`).
-    std::int32_t group_count       {detail::max_group_count};       //!< Capture groups.
-    std::int32_t nesting_depth     {detail::max_nesting_depth};     //!< Group nesting.
-    std::int32_t lookaround_length {detail::max_lookaround_length}; //!< Bytes a bounded lookaround may match.
-    std::size_t  dfa_memory        {detail::default_dfa_memory};    //!< Bytes the lazy DFA may cache per direction.
-  };
-} // namespace real
-
 #endif // REAL_CONFIG_HPP

@@ -12,6 +12,7 @@
 // Users: #include <real/real.hpp>, or a documented opt-in: <real/dfa.hpp>,
 // <real/regex_set.hpp>, <real/compat/std/regex.hpp>, <real/compat/re2/re2.hpp>.
 
+#include "real/core/config.hpp"
 #include "real/version.hpp"
 
 #include <array>
@@ -132,6 +133,35 @@ namespace real {
     syntax,
     unsupported,
     limit,
+  };
+
+  /*!
+   * \brief The resource limits of one expression, for a service that compiles patterns it did not write: each may
+   *        be lowered for the patterns of one call, none raised past this build's ceiling (`REAL_MAX_*`), and
+   *        the defaults are those ceilings. A pattern past one is refused with `error_kind::limit`.
+   *
+   * `dfa_memory` bounds what the search's lazy DFA may cache for this expression, per direction: past it the
+   * cache flushes, and a search that keeps flushing finishes on the VM, still linear and still exact. It has no
+   * ceiling, and may be raised.
+   */
+  struct limits
+  {
+    std::size_t  program_size;      //!< NFA instructions.
+    std::int32_t repeat_count;      //!< A bounded repeat's count (`a{n}`).
+    std::int32_t group_count;       //!< Capture groups.
+    std::int32_t nesting_depth;     //!< Group nesting.
+    std::int32_t lookaround_length; //!< Bytes a bounded lookaround may match.
+    std::size_t  dfa_memory;        //!< Bytes the lazy DFA may cache per direction (64 MiB by default).
+
+    //! \brief This build's limits: its ceilings, and the default DFA memory.
+    constexpr limits() noexcept
+      : program_size {detail::max_program_size},
+        repeat_count {detail::max_repeat_count},
+        group_count {detail::max_group_count},
+        nesting_depth {detail::max_nesting_depth},
+        lookaround_length {detail::max_lookaround_length},
+        dfa_memory {detail::default_dfa_memory}
+    {}
   };
 
   /*!
