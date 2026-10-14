@@ -11,7 +11,8 @@
 //!     its hints blanked; then every match and group of `find_iter` against the same walk with every
 //!     route's disable knob set, which also takes the batched walks off; then `search` again with one knob,
 //!     drawn per pattern, set alone.
-//!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x}; a third
+//!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x} (one literal
+//!     in four past the 16 bytes the route keeps, its subjects built from pieces of it); a third
 //!     of them under `(?i)` over {a, b, k, s, x}, against subjects holding both cases and the KELVIN SIGN and
 //!     LONG S that `k` and `s` fold to. Every match and group of `find_iter` with the route forced on (its
 //!     guards off, so a short subject takes it too) against the route off.
@@ -50,10 +51,11 @@ namespace {
       return static_cast<int>(rng_() % static_cast<unsigned>(n));
     }
 
-    std::string literal(const char* alphabet)
+    std::string literal(const char* alphabet,
+                        int         length = 0)
     {
       std::string s;
-      const int   n {1 + below(3)};
+      const int   n {length > 0 ? length : 1 + below(3)};
       const int   width {static_cast<int>(std::string_view {alphabet}.size())};
       for (int i {0}; i < n; ++i) {
         s += alphabet[below(width)];
@@ -168,8 +170,15 @@ namespace {
     std::string inner_pattern()
     {
       icase_ = below(3) == 0;
-      std::string p {std::string {icase_ ? "(?i)" : ""} + captured(inner_atom()) + captured(inner_atom())
-                     + literal(icase_ ? "abksx" : "abx")};
+      // One literal in four spans the 16 bytes a route keeps of it (inner_literal_max): what the route does with
+      // the rest is a guard of its own, and a literal of three letters never reaches it.
+      // A single atom ahead of the literal is the shape the routes that walk a class run take (`[ab]+lit[ab]+`).
+      inner_literal_ = literal(icase_ ? "abksx" : "abx", below(4) == 0 ? 14 + below(11) : 0);
+      std::string p {std::string {icase_ ? "(?i)" : ""} + captured(inner_atom())};
+      if (below(3) != 0) {
+        p += captured(inner_atom());
+      }
+      p += inner_literal_;
       if (below(2) != 0) {
         p += captured(inner_atom());
       }
@@ -185,7 +194,17 @@ namespace {
       static constexpr const char* folded[] {"a", "b", "k", "s", "x", "A", "B", "K", "S", "X", "\u212a", "\u017f"};
       std::string s;
       const int   n {below(20)};
+      const bool  long_literal {inner_literal_.size() > 3};
       for (int i {0}; i < n; ++i) {
+        if (long_literal && below(3) == 0) { // a random string holds a long literal, or most of it, almost never
+          const int  from {below(static_cast<int>(inner_literal_.size()))};
+          const auto part {inner_literal_.substr(static_cast<std::size_t>(from),
+                                                 1U + static_cast<std::size_t>(below(static_cast<int>(inner_literal_.size()) - from)))};
+          for (const char c : part) {
+            s += icase_ && below(2) == 0 ? static_cast<char>(c - 'a' + 'A') : c;
+          }
+          continue;
+        }
         s += icase_ ? folded[below(static_cast<int>(std::size(folded)))] : std::string(1, "abx"[below(3)]);
       }
       return s;
@@ -195,6 +214,7 @@ namespace {
 
     std::mt19937 rng_;
     bool         icase_ {}; //!< The current inner pattern is under `(?i)`.
+    std::string  inner_literal_; //!< The current inner pattern's literal.
   };
 
   using knob = bool& (*)();
