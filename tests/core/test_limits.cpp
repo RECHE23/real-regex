@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -78,13 +79,15 @@ TEST(a_limit_past_a_ceiling_or_under_one_is_refused)
   real::limits bound {};
   bound.program_size = 0;
   EXPECT_EQ(refusal("a", bound), "limit");
-  bound.program_size = std::size_t {1} << 40U;
+  bound.program_size = std::numeric_limits<std::size_t>::max();
   EXPECT_EQ(refusal("a", bound), "limit");
   bound            = {};
   bound.dfa_memory = 0;
   EXPECT_EQ(refusal("a", bound), "limit");
-  bound.dfa_memory = std::size_t {1} << 34U; // the DFA's memory has no ceiling: it may be raised
+  bound.dfa_memory = std::numeric_limits<std::size_t>::max(); // the DFA's memory has no ceiling: it may be raised
   EXPECT_EQ(refusal("a", bound), "none");
+  const real::regex unbounded {R"(\b\w+\d)", real::flags::none, bound};
+  EXPECT_EQ(unbounded.search("x y ab7").str(), "ab7");
 }
 
 TEST(a_regex_set_holds_every_member_to_the_limits)

@@ -121,6 +121,36 @@ namespace {
     }
     return nullptr;
   }
+
+  //! The real::limits \p given asks for: a field past its `size`, or left 0, at this build's value.
+  real::limits limits_from(const real_limits* given)
+  {
+    real::limits bound {};
+    if (given == nullptr) {
+      return bound;
+    }
+    const auto has = [given](size_t end) { return given->size >= end; };
+    if (has(offsetof(real_limits, program_size) + sizeof(given->program_size)) && given->program_size != 0) {
+      bound.program_size = given->program_size;
+    }
+    if (has(offsetof(real_limits, repeat_count) + sizeof(given->repeat_count)) && given->repeat_count != 0) {
+      bound.repeat_count = given->repeat_count;
+    }
+    if (has(offsetof(real_limits, group_count) + sizeof(given->group_count)) && given->group_count != 0) {
+      bound.group_count = given->group_count;
+    }
+    if (has(offsetof(real_limits, nesting_depth) + sizeof(given->nesting_depth)) && given->nesting_depth != 0) {
+      bound.nesting_depth = given->nesting_depth;
+    }
+    if (has(offsetof(real_limits, lookaround_length) + sizeof(given->lookaround_length))
+        && given->lookaround_length != 0) {
+      bound.lookaround_length = given->lookaround_length;
+    }
+    if (has(offsetof(real_limits, dfa_memory) + sizeof(given->dfa_memory)) && given->dfa_memory != 0) {
+      bound.dfa_memory = given->dfa_memory;
+    }
+    return bound;
+  }
 }
 
 extern "C" {
@@ -160,36 +190,6 @@ static real_regex* compile_one(const char* pattern, size_t len, uint32_t flags, 
     }
     return new real_regex {real::regex(std::string_view(pattern, len), static_cast<real::flags>(flags))};
   });
-}
-
-//! The real::limits \p given asks for: a field past its `size`, or left 0, at this build's value.
-static real::limits limits_from(const real_limits* given)
-{
-  real::limits bound {};
-  if (given == nullptr) {
-    return bound;
-  }
-  const auto has = [given](size_t end) { return given->size >= end; };
-  if (has(offsetof(real_limits, program_size) + sizeof(given->program_size)) && given->program_size != 0) {
-    bound.program_size = given->program_size;
-  }
-  if (has(offsetof(real_limits, repeat_count) + sizeof(given->repeat_count)) && given->repeat_count != 0) {
-    bound.repeat_count = given->repeat_count;
-  }
-  if (has(offsetof(real_limits, group_count) + sizeof(given->group_count)) && given->group_count != 0) {
-    bound.group_count = given->group_count;
-  }
-  if (has(offsetof(real_limits, nesting_depth) + sizeof(given->nesting_depth)) && given->nesting_depth != 0) {
-    bound.nesting_depth = given->nesting_depth;
-  }
-  if (has(offsetof(real_limits, lookaround_length) + sizeof(given->lookaround_length))
-      && given->lookaround_length != 0) {
-    bound.lookaround_length = given->lookaround_length;
-  }
-  if (has(offsetof(real_limits, dfa_memory) + sizeof(given->dfa_memory)) && given->dfa_memory != 0) {
-    bound.dfa_memory = given->dfa_memory;
-  }
-  return bound;
 }
 
 uint32_t real_abi_version(void)
