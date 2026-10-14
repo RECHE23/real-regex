@@ -47,6 +47,8 @@ real::fixed_string:
   publish_all: NTTP helper; view() and data are the whole type
 real::regex_error:
   publish_all: exception surface; kind/what/position are the whole type
+real::limits:
+  publish_all: six public fields -- the limits of one pattern
 
 real::compat::basic_regex:
   value_type: std trait

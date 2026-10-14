@@ -65,14 +65,27 @@ unless noted):
 
 **If you accept untrusted patterns** (not just untrusted input — e.g. a multi-tenant service where a
 tenant supplies the regex), the recommended posture: stay on `policy::strict` (`real::compat`'s default,
-which rejects a pattern REAL cannot run linearly rather than silently degrading); lower the limits for
-your build to whatever your workload actually needs, well below the library defaults, by defining
+which rejects a pattern REAL cannot run linearly rather than silently degrading); lower the limits of each
+pattern you compile to whatever your workload actually needs, well below the library defaults; and bound the
+haystack size upstream of the match call. The limits are set per pattern, where it is compiled:
+
+| surface | how | refused as |
+| --- | --- | --- |
+| C++ | `real::regex(pattern, flags, real::limits {...})`, `real::regex_set(patterns, flags, limits)` | `regex_error`, `kind() == error_kind::limit` |
+| C | `real_compile_opts(..., &real_limits {...}, ...)` | `REAL_ERR_LIMIT` |
+| Python | `real.compile(pattern, limits=real.Limits(...))` | `real.error`, `kind == "limit"` |
+| Rust | `RegexBuilder::new(p).size_limit(bytes).dfa_size_limit(bytes)` | `Error::CompiledTooBig` |
+| Go | `real.CompileWith(pattern, real.Options{...})` | an error wrapping `real.ErrLimit` |
+
+The limits are the program's instructions, a bounded repeat's count, the capture groups, the nesting, a
+lookaround's length, and the bytes the search's lazy DFA may cache (past them the search finishes on the VM, still
+linear). A per-pattern limit may lower the build's, never raise it; the build's ceilings are the macros
 `REAL_MAX_PROGRAM_SIZE`, `REAL_MAX_REPEAT_COUNT`, `REAL_MAX_GROUP_COUNT`, `REAL_MAX_NESTING_DEPTH`,
-`REAL_MAX_LOOKAROUND_LENGTH` or `REAL_MAX_DFA_STATES` (`-DREAL_MAX_REPEAT_COUNT=100`; a value above the
-default is refused at compile time, and every translation unit of a program must see the same values —
-`include/real/core/config.hpp`); and bound the haystack size upstream of the match call. There is no runtime kill-switch for
-match-time cost today (`prefilter_work_units` exists only as a test instrument) — the compile-time caps
-above are the current lever.
+`REAL_MAX_LOOKAROUND_LENGTH` and `REAL_MAX_DFA_STATES` (`-DREAL_MAX_REPEAT_COUNT=100`; a value above the default is
+refused at compile time, and every translation unit of a program must see the same values —
+`include/real/core/config.hpp`). No fallback policy delegates a pattern past a limit to another engine. There is no
+runtime kill-switch for match-time cost (`prefilter_work_units` exists only as a test instrument): match time is
+linear in the haystack, which is the size to bound.
 
 **The distinction that matters for a report**: a pattern and input that drive REAL *super-linear* is a
 bypass — report it through the channel above. A pattern that is linear but expensive on a hostile input
