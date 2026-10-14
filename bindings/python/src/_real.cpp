@@ -1875,6 +1875,17 @@ void set_regex_error(const real::regex_error& ex, PyObject* pattern,
   if (exc == nullptr) {
     return;
   }
+  // `kind` says why, as real::error_kind does: malformed, beyond the linear engine, or past a limit.
+  const char* kind {ex.kind() == real::error_kind::unsupported ? "unsupported"
+                    : ex.kind() == real::error_kind::limit     ? "limit"
+                                                                : "syntax"};
+  PyObject* kind_obj {PyUnicode_FromString(kind)};
+  if (kind_obj == nullptr || PyObject_SetAttrString(exc, "kind", kind_obj) < 0) {
+    Py_XDECREF(kind_obj);
+    Py_DECREF(exc);
+    return;
+  }
+  Py_DECREF(kind_obj);
   PyErr_SetObject(error_type, exc);
   Py_DECREF(exc);
 }
@@ -2998,12 +3009,51 @@ PyObject* real_compile_set(PyObject*, PyObject* args, PyObject* kwargs) {
 // compile()
 // ---------------------------------------------------------------------------
 
+// The real::limits a `limits` argument asks for: None, or a tuple of six non-negative ints (program_size,
+// repeat_count, group_count, nesting_depth, lookaround_length, dfa_memory), 0 standing for the build's value.
+// Returns false with an exception set on anything else.
+bool limits_from(PyObject* given, std::optional<real::limits>* out)
+{
+    if (given == nullptr || given == Py_None) {
+        return true;
+    }
+    if (PyTuple_Check(given) == 0 || PyTuple_Size(given) != 6) {
+        PyErr_SetString(PyExc_TypeError, "limits must be None or a tuple of six ints");
+        return false;
+    }
+    std::size_t values[6] {};
+    for (Py_ssize_t i = 0; i < 6; ++i) {
+        const unsigned long long value {PyLong_AsUnsignedLongLong(PyTuple_GetItem(given, i))};
+        if (value == static_cast<unsigned long long>(-1) && PyErr_Occurred() != nullptr) {
+            return false;
+        }
+        values[i] = static_cast<std::size_t>(value);
+    }
+    real::limits bound {};
+    const auto narrow = [](std::size_t value, std::int32_t fallback) {
+        return value == 0 ? fallback : value > 0x7FFFFFFFU ? std::int32_t {0x7FFFFFFF} : static_cast<std::int32_t>(value);
+    };
+    bound.program_size      = values[0] == 0 ? bound.program_size : values[0];
+    bound.repeat_count      = narrow(values[1], bound.repeat_count);
+    bound.group_count       = narrow(values[2], bound.group_count);
+    bound.nesting_depth     = narrow(values[3], bound.nesting_depth);
+    bound.lookaround_length = narrow(values[4], bound.lookaround_length);
+    bound.dfa_memory        = values[5] == 0 ? bound.dfa_memory : values[5];
+    *out = bound;
+    return true;
+}
+
 PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
     PyObject* pattern = nullptr;
     unsigned long py_flags = 0;
-    static const char* const keywords[] = {"pattern", "flags", nullptr};
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|k", const_cast<char**>(keywords),
-                                     &pattern, &py_flags)) {
+    PyObject* limits_obj = nullptr;
+    static const char* const keywords[] = {"pattern", "flags", "limits", nullptr};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|kO", const_cast<char**>(keywords),
+                                     &pattern, &py_flags, &limits_obj)) {
+        return nullptr;
+    }
+    std::optional<real::limits> bound;
+    if (!limits_from(limits_obj, &bound)) {
         return nullptr;
     }
 
@@ -3062,7 +3112,8 @@ PyObject* real_compile(PyObject*, PyObject* args, PyObject* kwargs) {
 
     real::regex* rx = nullptr;
     try {
-        rx = new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags);
+        rx = bound ? new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags, *bound)
+                   : new real::regex(std::string_view(data, static_cast<std::size_t>(len)), compile_flags);
     } catch (const real::regex_error& ex) {
         set_regex_error(ex, pattern, /*fallback_available=*/true, py_flags);
         return nullptr;
@@ -3144,6 +3195,9 @@ PyMODINIT_FUNC PyInit__real() {  // PyMODINIT_FUNC already says extern "C"
         re_err, nullptr);
     Py_XDECREF(re_err);
     Py_XDECREF(re_mod);
+    if (error_type != nullptr && PyObject_SetAttrString(error_type, "kind", Py_None) < 0) { // set per error raised
+        return nullptr;
+    }
     pattern_type = PyType_FromSpec(&pattern_spec);
     match_type = PyType_FromSpec(&match_spec);
     cyclic_match_type = (match_type != nullptr) ? PyType_FromSpecWithBases(&cyclic_match_spec, match_type) : nullptr;
