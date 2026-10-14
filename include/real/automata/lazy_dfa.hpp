@@ -51,7 +51,7 @@ namespace real::detail {
 
   //! Default bytes one lazy DFA's state cache may hold per direction; past it the cache flushes, and a scan
   //! that keeps flushing quits to the VM. Above the 30 MB a 2 000-word alternation builds without thrashing.
-  inline constexpr std::size_t lazy_dfa_default_byte_budget {std::size_t {64} << 20U};
+  inline constexpr std::size_t lazy_dfa_default_byte_budget {default_dfa_memory};
 
   /*!
    * \brief Test seam: the byte budget the search DFAs are built with (read at each DFA's construction).

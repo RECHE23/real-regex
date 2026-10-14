@@ -114,8 +114,9 @@ namespace real {
   }
 
   /*!
-   * \brief Whether a rejected pattern is malformed (`syntax`) or well formed but beyond REAL's linear
-   *        engine (`unsupported`).
+   * \brief Whether a rejected pattern is malformed (`syntax`), well formed but beyond REAL's linear engine
+   *        (`unsupported`), or well formed but past a resource limit (`limit`: \ref real::limits, or the build's
+   *        ceiling on a program, a repeat count, the groups or the nesting).
    *
    * `unsupported` covers a backreference, a conditional and an unbounded lookaround, which a linear-time
    * engine cannot represent. Stable and exposed by the C ABI, so a binding never parses
@@ -130,6 +131,7 @@ namespace real {
   {
     syntax,
     unsupported,
+    limit,
   };
 
   /*!

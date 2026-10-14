@@ -263,11 +263,15 @@ namespace real::detail {
      * \brief Binds the compiler to a parsed pattern and its flags.
      * \param[in] tree The AST to compile (borrowed, must outlive the compiler).
      * \param[in] compile_flags The effective compilation flags.
+     * \param[in] bound The expression's limits; the program size and the lookaround length are the compiler's.
      */
-    constexpr compiler(const ast& tree,
-                       flags      compile_flags)
+    constexpr compiler(const ast&    tree,
+                       flags         compile_flags,
+                       const limits& bound = {})
       : tree_(tree),
-        flags_(compile_flags)
+        flags_(compile_flags),
+        program_size_(bound.program_size),
+        lookaround_length_(bound.lookaround_length)
     {}
 
   private:
@@ -540,16 +544,18 @@ namespace real::detail {
         facts.nullable_captured_repeat = prog.hints.nullable_captured_repeat;
         prog.hints                     = facts;
       }
-      if (prog.code.size() > max_program_size) {
-        throw regex_error(std::string {program_too_large}, 0);
+      if (prog.code.size() > program_size_) {
+        throw regex_error(std::string {program_too_large}, 0, error_kind::limit);
       }
       return prog;
     }
 
   private:
 
-    const ast& tree_;                //!< The AST being compiled.
-    flags      flags_ {flags::none}; //!< Effective compilation flags.
+    const ast&   tree_;                //!< The AST being compiled.
+    flags        flags_ {flags::none}; //!< Effective compilation flags.
+    std::size_t  program_size_;        //!< The expression's program size limit (\ref real::limits).
+    std::int32_t lookaround_length_;   //!< The expression's lookaround length limit (\ref real::limits).
 
     // --- low-level emission helpers -------------------------------------
 
@@ -572,13 +578,13 @@ namespace real::detail {
      *
      * \param[in,out] prog        The program being built.
      * \param[in]     instruction The instruction to append.
-     * \throws real::regex_error when \ref max_program_size would be exceeded.
+     * \throws real::regex_error when the expression's program size would be exceeded.
      */
-    static constexpr void emit(dynamic_program& prog,
-                               instr            instruction)
+    constexpr void emit(dynamic_program& prog,
+                        instr            instruction) const
     {
-      if (prog.code.size() >= max_program_size) {
-        throw regex_error(std::string {program_too_large}, 0);
+      if (prog.code.size() >= program_size_) {
+        throw regex_error(std::string {program_too_large}, 0, error_kind::limit);
       }
       prog.code.push_back(instruction);
     }
@@ -588,7 +594,7 @@ namespace real::detail {
      * \param[in,out] prog The program being built.
      * \return Its instruction index, for the caller to patch.
      */
-    static constexpr std::int32_t emit_split(dynamic_program& prog)
+    constexpr std::int32_t emit_split(dynamic_program& prog) const
     {
       emit(prog, {.op = opcode::split, .primary_target = -1, .secondary_target = -1});
       return here(prog) - 1;
@@ -599,7 +605,7 @@ namespace real::detail {
      * \param[in,out] prog The program being built.
      * \return Its instruction index, for the caller to patch.
      */
-    static constexpr std::int32_t emit_jump(dynamic_program& prog)
+    constexpr std::int32_t emit_jump(dynamic_program& prog) const
     {
       emit(prog, {.op = opcode::jump, .primary_target = -1});
       return here(prog) - 1;
@@ -667,8 +673,8 @@ namespace real::detail {
      * \param[in]     klass The class bitmap to match.
      * \throws real::regex_error if more than 65536 distinct classes are needed.
      */
-    static constexpr void emit_klass(dynamic_program&  prog,
-                                     const char_class& klass)
+    constexpr void emit_klass(dynamic_program&  prog,
+                              const char_class& klass) const
     {
       emit(prog, {.op = opcode::klass, .arg16 = intern_class(prog, klass)});
     }
@@ -746,8 +752,8 @@ namespace real::detail {
      * \param[in,out] prog The program being built.
      * \param[in]     cd   The effective code-point class (ASCII bitmap + non-ASCII ranges).
      */
-    static constexpr void emit_klass_cp(dynamic_program& prog,
-                                        const class_def& cd)
+    constexpr void emit_klass_cp(dynamic_program& prog,
+                                 const class_def& cd) const
     {
       emit(prog, {.op = opcode::klass_cp, .arg16 = intern_cp_class(prog, cd)});
       emit_klass(prog, utf8_cont_set()); // three continuation slots; klass_cp's skip picks the entry
@@ -773,9 +779,9 @@ namespace real::detail {
      * \return `true` if the class was emitted here (or matches, when probing); `false` if the caller
      *         must emit it otherwise.
      */
-    static constexpr bool try_emit_fixed_width_class(dynamic_program& prog,
-                                                     const class_def& eff,
-                                                     bool             probe_only = false)
+    constexpr bool try_emit_fixed_width_class(dynamic_program& prog,
+                                              const class_def& eff,
+                                              bool             probe_only = false) const
     {
       if (!eff.ascii.empty()) {
         return false; // a mixed ASCII/non-ASCII class is variable width by construction
@@ -1493,6 +1499,10 @@ namespace real::detail {
                           "character takes up to 4)",
                           0, error_kind::unsupported);
       }
+      if (lmax > lookaround_length_) {
+        throw regex_error("lookaround sub-pattern too long for this expression's lookaround_length limit", 0,
+                          error_kind::limit);
+      }
       const std::size_t sub_id {prog.lookarounds.size()};
       if (sub_id > 0xFFFF) {
         // arg16 holds the index; truncation would retarget the assertion at another sub-pattern.
@@ -1936,17 +1946,18 @@ namespace real::detail {
    * \return The compiled \ref dynamic_program.
    * \throws real::regex_error if the program exceeds \ref max_program_size.
    */
-  constexpr dynamic_program compile(const ast& tree,
-                                    flags      compile_flags)
+  constexpr dynamic_program compile(const ast&    tree,
+                                    flags         compile_flags,
+                                    const limits& bound = {})
   {
-    dynamic_program prog {compiler(tree, compile_flags).compile()};
+    dynamic_program prog {compiler(tree, compile_flags, bound).compile()};
     // The inner-literal prefix sub-program, for the reverse start-finder. Dynamic only: a second compile
     // would pass a static_regex's constexpr budget.
     if (!std::is_constant_evaluated() && prog.hints.inner_literal_prefix >= 1) {
       const dynamic_program pp {
         compiler(build_prefix_ast(tree, prog.hints.inner_literal_prefix,
                                   prog.hints.inner_literal_prefix_skip),
-                 compile_flags)
+                 compile_flags, bound)
         .compile()};
       prog.prefix_code       = pp.code;
       prog.prefix_classes    = pp.classes;

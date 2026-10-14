@@ -1053,17 +1053,22 @@ namespace real {
        * \brief Parses and compiles \p pattern with flags \p compile_flags.
        * \param[in] pattern       The pattern text.
        * \param[in] compile_flags The requested flags (merged with a leading `(?imsxaU)` / `(?flags-flags)` group).
+       * \param[in] bound         The expression's limits (\ref real::limits).
        * \return A populated storage object.
-       * \throws real::regex_error on an invalid or over-limit pattern.
+       * \throws real::regex_error on an invalid or over-limit pattern, or limits past this build's ceilings.
        */
       static constexpr dynamic_storage compile(std::string_view pattern,
-                                               flags            compile_flags)
+                                               flags            compile_flags,
+                                               const limits&    bound = {})
       {
-        const ast   tree      {detail::parse(pattern, compile_flags)};
+        if (!std::is_constant_evaluated()) {
+          detail::check_limits(bound);
+        }
+        const ast   tree      {detail::parse(pattern, compile_flags, bound)};
         const flags effective {compile_flags | tree.inline_flags};
         // The compiler gets `effective` (additions only): the parser already applied any `(?-flags)` removal
         // to its scopes. What is reported is the set in force.
-        dynamic_program prog {detail::compile(tree, effective)};
+        dynamic_program prog {detail::compile(tree, effective, bound)};
         // This storage has the lazy DFA, which takes a fixed shape the walk would verify too deep.
         if (!std::is_constant_evaluated() && prog.hints.fixed_shape
             && !detail::fixed_shape_walk_pays(prog.code, prog.hints)) {
