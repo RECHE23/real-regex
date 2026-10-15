@@ -13,9 +13,16 @@
 // works on both, and it fuzzes the actual shim code (real_capi.cpp), not a copy.
 #include "real_capi.cpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+
+// Iterating, counting and substituting are quadratic at worst (docs/COMPATIBILITY.md), and this target makes
+// seven such passes: a subject past this length lets one input exceed libFuzzer's timeout with no defect behind
+// it (`.+\0\0…|}|…` in dotall, its first branch alive to the end, took 4 s for one count over 22 KB). It stays
+// above the 512 bytes from which a search runs on the lazy DFA.
+constexpr std::size_t max_subject = 1024;
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
 {
@@ -27,11 +34,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const std::size_t pattern_len = data[1] % (remaining + 1U);
     const std::size_t rest_after_pattern = remaining - pattern_len;
     const std::size_t repl_len = data[2] % (rest_after_pattern + 1U);
-    const std::size_t text_len = rest_after_pattern - repl_len;
+    const std::size_t text_bytes = rest_after_pattern - repl_len;
+    const std::size_t text_len = std::min(text_bytes, max_subject);
     const auto* body = reinterpret_cast<const char*>(data + 3);
     const char* pattern = body;
     const char* text = body + pattern_len;
-    const char* repl = body + pattern_len + text_len;
+    const char* repl = body + pattern_len + text_bytes;
 
     char err[256];
     int code = 0;
