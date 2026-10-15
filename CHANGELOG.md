@@ -2,6 +2,14 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.17
+
+10.17 (**the Rust binding declines a class range the regex crate reads otherwise**): **THE TABLES ARE RE-STAMPED, AT
+`2026.10.16` + tree `461648d8`** (both ISAs; see the Version cell).
+- **§A / §E / §Unicode / §B**: nothing in this train touches the engine; the binding's change is a refusal at
+  compile time, and no row runs through the Rust binding.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.16
 
 10.16 (**a read past the subject, a lost match in bytes mode, an overflow in `\U`**): **THE TABLES ARE NOT RE-RUN, AND
