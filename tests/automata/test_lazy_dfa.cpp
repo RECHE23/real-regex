@@ -2,11 +2,14 @@
 // These pin the machinery: the byte-class alphabet, the priority-ordered subset construction, the memoized
 // transition cache (hit/miss), the bounded eviction (flush) + thrash detector, and the kFirstMatch forward
 // pass itself — its reported end differential against the Pike VM, with a teeth-verified priority cut.
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <sciforge/test/framework.hpp>
@@ -965,4 +968,26 @@ TEST(visit_marks_start_each_computation_empty)
   EXPECT(!marks.test(5));
   marks.begin(12); // another program's size: all fresh
   EXPECT(!marks.test(11));
+}
+
+// A line-anchored search whose subject ends in `\n` has a candidate at the very end. When no match starts there,
+// the search ends: a forward pass from one past it read the byte after the subject (seen by the address
+// sanitizer, as the subject sits in a heap block of its exact size).
+TEST(lazy_dfa_search_stops_at_a_candidate_on_the_last_position)
+{
+  for (const std::size_t length : {std::size_t {600}, std::size_t {5000}}) {
+    std::string             source(length, 'z');
+    source                  += '\n';
+    std::unique_ptr<char[]> block {std::make_unique<char[]>(source.size())};
+    std::copy(source.begin(), source.end(), block.get());
+    const std::string_view text   {block.get(), source.size()};
+    const real::regex      re     {"(?m)^.b"};
+    EXPECT(!re.search(text).matched());
+    std::size_t matches           {0};
+    for (const auto& m : re.find_iter(text)) {
+      (void)m;
+      ++matches;
+    }
+    EXPECT_EQ(matches, 0U);
+  }
 }
