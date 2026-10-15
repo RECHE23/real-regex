@@ -271,6 +271,8 @@ fn unsupported_construct(construct: &str, rescue: Rescue) -> Error {
 // `--`, `~~`; Python `re` — REAL's model — treats `[` as a literal inside a class, so `[a[b]]` parses to two
 // different classes (and two match sets). Rather than implement rust's class algebra, the crate declines such
 // patterns up front with a hint (the `fallback` feature then delegates them, and `regex` does support them).
+// A `]` heading a class is a literal to both, but only `re` lets it start a range: `[]-~]` is `]`..`~` there
+// and the three members `]`, `-`, `~` in the crate, so that form is declined too.
 // Returns the offending construct, or None. Escapes (`\[`, `\-`, `\\`) are respected. `\p{…}` is a separate
 // arc; here we only spot the class-set syntax.
 fn nested_class_syntax(pattern: &[u8]) -> Option<&'static str> {
@@ -296,6 +298,9 @@ fn nested_class_syntax(pattern: &[u8]) -> Option<&'static str> {
             }
         } else if b == b']' {
             if class_pos == 0 {
+                if pattern.get(i + 1) == Some(&b'-') && pattern.get(i + 2).is_some_and(|&c| c != b']') {
+                    return Some("character-class range from a leading `]`");
+                }
                 class_pos += 1; // a `]` right after `[` is a literal member, not the close
             } else {
                 in_class = false;

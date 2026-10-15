@@ -13,6 +13,25 @@ fn declines_rust_only_class_syntax() {
 }
 
 #[test]
+fn declines_a_range_from_a_leading_bracket() {
+    // `re` reads `[]-~]` as the range `]`..`~`, the crate as the members `]`, `-`, `~`: `|` is in one, not the other.
+    for pat in [r"[]-~]", r"[^]-~]", r"[]-\x7e]", r"x[]-a]y"] {
+        let err = Regex::new(pat).expect_err(pat);
+        assert!(err.is_unsupported(), "{pat:?} should be Unsupported, got {err:?}");
+    }
+    // A `-` that closes on `]`, or a range after the first member, means the same to both.
+    for pat in [r"[]-]", r"[^]-]", r"[]a-~]", r"[a]-~]"] {
+        assert!(Regex::new(pat).is_ok(), "{pat:?} should compile");
+    }
+    let re = Regex::new(r"[]-]").unwrap();
+    assert!(re.is_match("-") && re.is_match("]") && !re.is_match("|"));
+    match real_regex::bytes::Regex::new(r"[]-~]") {
+        Err(e) => assert!(e.is_unsupported()),
+        Ok(_) => panic!("[]-~] should decline in the bytes API"),
+    }
+}
+
+#[test]
 fn accepts_escaped_and_plain_classes() {
     // Escaped [ / - / and ordinary classes: re and rust agree, so they must still compile.
     for pat in [r"[\[]", r"[a\-b]", r"[-a]", r"[a-]", r"[a-z]", r"[a-z0-9_]", r"[]a]", r"[^]]"] {
