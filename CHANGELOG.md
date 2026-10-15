@@ -2,6 +2,14 @@
 
 Per-train benchmark-impact log: the journal of what each release train measurably touched (or explicitly did not touch) in `docs/BENCHMARKS.md`'s tables. The Version cell is a stamp (`REAL \`X.Y.Z\`` + whether the tables moved); the train lives here. There is no third file. This is not the release notes — for the complete per-release description of features, fixes, and breaking changes, see `docs/release-notes/` and the GitHub Releases page.
 
+## v2026.10.16
+
+10.16 (**a read past the subject, a lost match in bytes mode, an overflow in `\U`**): **THE TABLES ARE NOT RE-RUN, AND
+THE STAMP STAYS AT `2026.10.5` + tree `3c72c9d6`.**
+- **§A / §E / §Unicode / §B**: the lazy-DFA search ends one comparison earlier at a candidate on the subject's last
+  position, after its walk has failed; the bytes-mode code-point shape is declined, and no row runs in bytes mode.
+The multi-pattern section keeps its `600b0fb` stamp.
+
 ## v2026.10.15
 
 10.15 (**a wrong match around a literal longer than 16 bytes**): **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT
