@@ -979,7 +979,7 @@ TEST(lazy_dfa_search_stops_at_a_candidate_on_the_last_position)
     std::string             source(length, 'z');
     source                  += '\n';
     std::unique_ptr<char[]> block {std::make_unique<char[]>(source.size())};
-    std::copy(source.begin(), source.end(), block.get());
+    std::ranges::copy(source, block.get());
     const std::string_view text   {block.get(), source.size()};
     const real::regex      re     {"(?m)^.b"};
     EXPECT(!re.search(text).matched());
