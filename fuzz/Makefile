@@ -101,7 +101,7 @@ endef
 fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus $(FUZZ_DIR)
 	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target || { $(call FUZZ_EXPLAIN,fuzz); }; \
+	    -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined fuzz/fuzz_target.cpp -o $(FUZZ_DIR)/fuzz_target || { $(call FUZZ_EXPLAIN,fuzz); }; \
 	 $(FUZZ_DIR)/fuzz_target -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    -artifact_prefix=$(FUZZ_DIR)/ \
 	    $(FUZZ_DIR)/corpus fuzz/corpus

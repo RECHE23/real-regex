@@ -30,7 +30,7 @@ test: ## Build and run the C ABI tests (test_capi.c) and a consumer of the C++ f
 fuzz: ## libFuzzer over the C ABI shim under ASan/UBSan (FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-capi
 	clang++ $(CXXSTD) -O1 -g $(INCLUDES) -I$(ROOT)/bindings/c \
-	    -fsanitize=fuzzer,address,undefined $(ROOT)/fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
+	    -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined $(ROOT)/fuzz/fuzz_capi.cpp -o $(FUZZ_DIR)/fuzz_capi
 # -artifact_prefix or libFuzzer drops crash-*/slow-unit-* into the CURRENT directory, which for
 # this recipe is a SOURCE directory — one `git add -A` away from being committed, which has
 # happened. fuzz/Makefile's three targets already carry it; this recipe is a fourth entry point

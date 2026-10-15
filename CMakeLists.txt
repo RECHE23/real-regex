@@ -209,9 +209,11 @@ if(REAL_SANITIZE)
     endif()
     # -g1: line tables are all a sanitizer report reads (function, file, line, inlined frames).
     # Full -g costs a third more compile time on every test TU, each of which instantiates the engine.
+    # -fno-sanitize-recover: undefined behaviour stops the run; recovering, UBSan printed a line and the test
+    # passed (a signed overflow in `\U` parsing went through the gate that way).
     target_compile_options(real_tests_bin PRIVATE
-        -fsanitize=address,undefined -fno-omit-frame-pointer -g1 -O1)
-    target_link_options(real_tests_bin PRIVATE -fsanitize=address,undefined)
+        -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g1 -O1)
+    target_link_options(real_tests_bin PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=undefined)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # libstdc++ <regex> _State std::function middle-end -Wmaybe-uninitialized FP under -O1.
         # Scoped to the sanitize build (ASan/UBSan is its purpose); the normal build keeps
