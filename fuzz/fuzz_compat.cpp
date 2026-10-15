@@ -116,9 +116,10 @@ namespace {
   // degree of a polynomial in the subject's length, so three or more over a long run of the same byte is
   // effectively unbounded for std: a smoke run died on `libFuzzer: timeout after 11 seconds` with every frame
   // inside std::__detail::_Executor. Two are cubic over all the start positions, which a long run of the same
-  // byte still makes unbounded in practice: `\xff{49}\xff+\xff{16}\xff*\xff…` takes libstdc++ 5 ms over 256
-  // such bytes and 2 s over 522, for one search of the several the harness makes. Counted, not parsed, and
-  // approximate the same way: escapes and classes are skipped, and a false positive only shortens a subject.
+  // byte still makes unbounded in practice: `\0*\0*\0{30}…` takes libstdc++ 5 ms over 96 such bytes and 170 ms
+  // over 234, for one search of the eight or so the harness makes, which the sanitizers slow tenfold. Counted,
+  // not parsed, and approximate the same way: escapes and classes are skipped, and a false positive only
+  // shortens a subject.
   int unbounded_quantifiers(std::string_view pat)
   {
     int  unbounded {0};
@@ -380,7 +381,7 @@ namespace {
   constexpr std::size_t max_nested_quantifier_subject {16};
 
   // Where two unbounded quantifiers side by side stay cubic enough for std under the sanitizers.
-  constexpr std::size_t max_two_quantifier_subject {256};
+  constexpr std::size_t max_two_quantifier_subject {96};
 
   //! \brief Whether the local std honors `match_prev_avail` as the standard does. compat takes the flag on REAL
   //!        for one search or match; libc++ ignores it for `^` (`^a` over the `a` of "ba" matches) and never lets
