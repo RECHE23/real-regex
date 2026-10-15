@@ -383,6 +383,41 @@ TEST(inner_literal_fixed_codepoint_shape_fires_on_exactly_the_loopless_sequences
   EXPECT(!shape(R"(\d{2,4}-\d{2})").first); // a bounded repeat still compiles to a split
   EXPECT(!shape(R"(\w{3}:\w{3}\b)").first); // a trailing assertion is not a consuming atom
   EXPECT(!shape("dog").first);              // literal at the head, no prefix to step back over
+
+  // In bytes mode a byte class matches a continuation byte, which a walk back by code points steps over.
+  const real::detail::ast bytes_tree {real::detail::parse(".\x9dn", real::flags::bytes)};
+  EXPECT(!real::detail::compile(bytes_tree, real::flags::bytes).hints.il_cp_shape_eligible);
+}
+
+TEST(inner_literal_route_matches_the_core_in_bytes_mode)
+{
+  struct testcase
+  {
+    std::string pattern;
+    std::string subject;
+  };
+  const testcase cases[] {
+    {.pattern = "((a|\x9d))(.)\x9d", .subject = "b\x9d\x9d" "b\x9d" "ab\xff\xff" "b\x9d" "babb\x9d\x9d"},
+    {.pattern = "(.)((a|\x9d))a.", .subject = "\x9d" "a\x9d" "a\xff\x9d"},
+    {.pattern = "." + std::string(16, '\x9d') + "n" + std::string(17, '\x9d'), .subject = std::string(40, '\x9d') + "n" + std::string(17, '\x9d')},
+  };
+  real::detail::inner_literal_guard_disabled() = true;
+  for (const testcase& tc : cases) {
+    const auto all {[&] {
+                      const real::regex                                re {tc.pattern, real::flags::bytes};
+                      std::vector<std::pair<std::size_t, std::size_t>> out;
+                      for (const auto& m : re.find_iter(tc.subject)) {
+                        out.emplace_back(m.start(0), m.end(0));
+                      }
+                      return out;
+                    }};
+    real::detail::inner_literal_route_disabled() = true;
+    const auto core {all()};
+    real::detail::inner_literal_route_disabled() = false;
+    EXPECT(!core.empty());
+    EXPECT(all() == core);
+  }
+  real::detail::inner_literal_guard_disabled() = false;
 }
 
 // A wide shape keeps the route: past 255 code points it fell to the Pike VM, a few hundred threads per byte

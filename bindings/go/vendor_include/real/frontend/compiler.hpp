@@ -492,8 +492,10 @@ namespace real::detail {
         }
       }
       // il_cp_shape_eligible: saves plus a fixed sequence of code-point atoms and literal bytes, no split,
-      // jump or assertion. It covers the `klass_cp` shapes the byte-width `fixed_shape` route cannot.
-      if (il.len > 0 && il.prefix_child_count >= 1) {
+      // jump or assertion. It covers the `klass_cp` shapes the byte-width `fixed_shape` route cannot. Not in
+      // bytes mode: a `klass` there matches any byte, a continuation byte included, which the route's walk
+      // back by code points steps over (`.\x9d…` lost its matches after one).
+      if (il.len > 0 && il.prefix_child_count >= 1 && !prog.byte_mode) {
         std::size_t pc          {0};
         std::size_t cps         {0};
         bool        ok          {true};

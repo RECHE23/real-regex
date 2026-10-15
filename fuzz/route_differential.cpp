@@ -12,7 +12,8 @@
 //!     route's disable knob set, which also takes the batched walks off; then `search` again with one knob,
 //!     drawn per pattern, set alone.
 //!   * `inner`: patterns built around a literal, the inner-literal route's own shape, over {a, b, x} (one literal
-//!     in four past the 16 bytes the route keeps, its subjects built from pieces of it); a third
+//!     in four past the 16 bytes the route keeps, its subjects built from pieces of it; one pattern in six in
+//!     bytes mode, over {a, b, 0x9d} with 0xFF in its subjects, where a byte class matches a continuation byte); a third
 //!     of them under `(?i)` over {a, b, k, s, x}, against subjects holding both cases and the KELVIN SIGN and
 //!     LONG S that `k` and `s` fold to. Every match and group of `find_iter` with the route forced on (its
 //!     guards off, so a short subject takes it too) against the route off.
@@ -129,7 +130,7 @@ namespace {
     //! An atom of the inner mode: literals, alternations of them, and the loops around a literal.
     std::string inner_atom()
     {
-      const char* const abx {icase_ ? "abksx" : "abx"};
+      const char* const abx {alphabet()};
       switch (below(14)) {
         case 0:
           return literal(abx);
@@ -167,13 +168,26 @@ namespace {
       return below(2) != 0 ? "(" + atom + ")" : atom;
     }
 
+    //! The current inner pattern's flags.
+    [[nodiscard]] real::flags flags() const
+    {
+      return bytes_ ? real::flags::bytes : real::flags::none;
+    }
+
+    //! The letters of the current inner pattern's literals.
+    [[nodiscard]] const char* alphabet() const
+    {
+      return icase_ ? "abksx" : bytes_ ? "ab\x9d" : "abx";
+    }
+
     std::string inner_pattern()
     {
       icase_ = below(3) == 0;
+      bytes_ = !icase_ && below(4) == 0;
       // One literal in four spans the 16 bytes a route keeps of it (inner_literal_max): what the route does with
       // the rest is a guard of its own, and a literal of three letters never reaches it.
       // A single atom ahead of the literal is the shape the routes that walk a class run take (`[ab]+lit[ab]+`).
-      inner_literal_ = literal(icase_ ? "abksx" : "abx", below(4) == 0 ? 14 + below(11) : 0);
+      inner_literal_ = literal(alphabet(), below(4) == 0 ? 14 + below(11) : 0);
       std::string p {std::string {icase_ ? "(?i)" : ""} + captured(inner_atom())};
       if (below(3) != 0) {
         p += captured(inner_atom());
@@ -205,6 +219,10 @@ namespace {
           }
           continue;
         }
+        if (bytes_) { // continuation bytes, and one no UTF-8 holds: a byte class matches each as one byte
+          s += "ab\x9d\xff"[below(4)];
+          continue;
+        }
         s += icase_ ? folded[below(static_cast<int>(std::size(folded)))] : std::string(1, "abx"[below(3)]);
       }
       return s;
@@ -214,6 +232,7 @@ namespace {
 
     std::mt19937 rng_;
     bool         icase_ {}; //!< The current inner pattern is under `(?i)`.
+    bool         bytes_ {}; //!< The current inner pattern is compiled with `flags::bytes`.
     std::string  inner_literal_; //!< The current inner pattern's literal.
   };
 
@@ -308,7 +327,7 @@ int main(int argc,
     }
     std::optional<real::regex> holder;
     try {
-      holder.emplace(pattern);
+      holder.emplace(pattern, general_mode ? real::flags::none : gen.flags());
     }
     catch (const real::regex_error&) {
       continue; // generated outside the grammar: not a divergence
