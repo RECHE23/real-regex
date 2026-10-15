@@ -108,11 +108,17 @@ fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
 
 # Differential fuzzer: real::compat vs std::regex (search/replace/iterate/token/match-flags). This
 # is the net that has caught every silent divergence in the compat layer, so it runs in CI too.
+# Its process grows where the others do not: std::regex allocates and frees a great deal under the
+# address sanitizer, whose resident memory then rises with no live allocation behind it (an hour-long
+# run stopped at libFuzzer's 2 GB with 61 MB live and 248 MB in quarantine). A quarantine of 64 MB
+# takes about 200 MB off it at no cost in executions; the resident limit is 3 GB, and a single
+# allocation is still held to 2 GB, which is what a runaway input shows.
 fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-compat $(FUZZ_DIR)
 	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
 	    -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat || { $(call FUZZ_EXPLAIN,fuzz-compat); }; \
-	 $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
+	 ASAN_OPTIONS="$${ASAN_OPTIONS:+$$ASAN_OPTIONS:}quarantine_size_mb=64" \
+	 $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 -rss_limit_mb=3072 -malloc_limit_mb=2048 \
 	    -artifact_prefix=$(FUZZ_DIR)/ \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
 
