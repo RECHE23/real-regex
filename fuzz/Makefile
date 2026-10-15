@@ -111,7 +111,7 @@ fuzz: ## libFuzzer robustness fuzzing (Clang; FUZZ_TIME=secs)
 fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=secs)
 	@mkdir -p $(FUZZ_DIR)/corpus-compat $(FUZZ_DIR)
 	@	 cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat || { $(call FUZZ_EXPLAIN,fuzz-compat); }; \
+	    -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat || { $(call FUZZ_EXPLAIN,fuzz-compat); }; \
 	 $(FUZZ_DIR)/fuzz_compat -max_total_time=$(FUZZ_TIME) -timeout=10 \
 	    -artifact_prefix=$(FUZZ_DIR)/ \
 	    $(FUZZ_DIR)/corpus-compat fuzz/corpus
@@ -131,7 +131,7 @@ fuzz-compat: ## Differential fuzz: real::compat vs std::regex (Clang; FUZZ_TIME=
 fuzz-compat-known: ## Assert every filed compat divergence still reproduces (red once it is fixed)
 	@mkdir -p $(FUZZ_DIR)
 	@cd $(ROOT) && clang++ $(CXXSTD) -O1 -g $(INCLUDES) \
-	    -fsanitize=fuzzer,address,undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat \
+	    -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined fuzz/fuzz_compat.cpp -o $(FUZZ_DIR)/fuzz_compat \
 	  || { $(call FUZZ_EXPLAIN,fuzz-compat-known); }
 	@cd $(ROOT) && n=0; for unit in fuzz/known-crashes/*; do \
 	   test -f "$$unit" || continue; \
