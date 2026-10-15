@@ -185,6 +185,8 @@ TEST(unicode_escape_rejections)
   EXPECT_THROWS(real::regex("[\\u0041]", real::flags::bytes), real::regex_error);
   EXPECT_THROWS(real::regex("\\uD800"), real::regex_error);                     // surrogate
   EXPECT_THROWS(real::regex("\\U00110000"), real::regex_error);                 // > U+10FFFF
+  EXPECT_THROWS(real::regex("\\U80000000"), real::regex_error);                 // past a signed 32-bit sum
+  EXPECT_THROWS(real::regex("\\UFFFFFFFF"), real::regex_error);                 // the largest eight digits
   EXPECT_THROWS(real::regex("\\u00e"), real::regex_error);                      // incomplete (3 hex)
   EXPECT_THROWS(real::regex("\\U0001F60"), real::regex_error);                  // incomplete (7 hex)
   EXPECT_THROWS(real::regex("\\N{BULLET}"), real::regex_error);                 // named unicode escape
