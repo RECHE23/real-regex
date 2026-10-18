@@ -67,7 +67,7 @@ include $(ROOT)/mk/common.mk
 # Vendored in-repo (see mk/help.mk for why this is never a hard include toward sciforge).
 include mk/help.mk
 
-.PHONY: gate-skips-reset gate-skips-report docs-site-gate-or-skip misra-x86-root stubtest-or-skip go-or-skip lint-gate \
+.PHONY: release-bump go-release-tag release-tag-body gate-skips-reset gate-skips-report docs-site-gate-or-skip misra-x86-root stubtest-or-skip go-or-skip lint-gate \
         test-gcc-or-skip lint-changed-root push-tools push-docs push-engine
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
@@ -1062,80 +1062,44 @@ install: ## [release] Install the Python package (pip)
 uninstall: ## [release] Uninstall the Python package (pip)
 	$(PYTHON) -m pip uninstall -y real-regex
 
-# Cuts the complete calendar release in one invocation. Computes YYYY.M.PATCH with
-# the patch reset each month (first release of a month is .0; PEP 440 drops leading
-# zeros, so 2026.6.1, never 2026.06.001), bumps every version-checked file
-# (pyproject + __init__ + version.hpp + Cargo.toml + CITATION.cff + README GIT_TAG;
-# CMakeLists.txt derives from pyproject and follows), re-vendors Go, folds the human
-# inputs (docs/release-notes/v<version>.md must exist; BENCHMARKS re-stamp optional;
-# CHANGELOG.md is the train journal and is a gate-bump file, not a release dirty exception),
-# commits with the BODY=<file> body, tags the engine AND the co-located decoupled Go
-# module (bindings/go/v0.<minor>.<patch+1> by default, so pkg.go.dev never lags the engine),
-# and pushes. The MINOR is read from the newest Go tag, never assumed: it used to be hardcoded
-# to 0.1, so the first release after an incompatible Go change would have shipped it as
-# v0.1.<n+1> -- a PATCH tag on a broken API, which `go get -u` delivers silently. A minor bump
-# is a human decision: GO_MINOR=1 tags bindings/go/v0.<m+1>.0 on the SAME commit as the engine
-# tag. (Tagging v0.<m>.0 by hand first would still leave this target to patch-bump and
-# push v0.<m>.1.) DRY_RUN=1 prints both tags and stops before commit/tag/push.
-# Pushing the engine tag drives release.yml (wheels/sdist -> PyPI, crate, GitHub
-# release, tap bumps, pkg.go.dev nudge). BODY lives OUTSIDE the tree (the clean-tree
-# check tolerates only the human inputs). Revert a dry-run with `git reset --hard` after
-# copying the notes file off-tree (the throwaway notes file stays untracked -- remove it too).
-release: ## [release] Cut the complete calendar release (bump all, tag engine + Go, push) — BODY=<file outside the tree>; DRY_RUN=1 to rehearse; GO_MINOR=1 for a Go minor
-	@test "$$(git symbolic-ref --short HEAD)" = main || { echo "release from main only"; exit 1; }
-	@test -n "$(BODY)" || { echo "release: pass BODY=<file> (the commit body, a file OUTSIDE the tree)"; exit 1; }
-	@test -f "$(BODY)" || { echo "release: BODY file '$(BODY)' not found"; exit 1; }
-	@dirty="$$(git status --porcelain | grep -vE '^.. docs/release-notes/|^.. docs/BENCHMARKS\.md$$' || true)"; \
-	 test -z "$$dirty" || { echo "release: tree not clean beyond the human inputs (docs/release-notes/, docs/BENCHMARKS.md):"; echo "$$dirty"; exit 1; }
-	@git fetch --tags --quiet origin
-	@year=$$(date -u +%Y); month=$$(date -u +%m | sed 's/^0//'); \
-	 patch=$$(git tag -l "v$$year.$$month.*" | wc -l | tr -d ' '); \
-	 version="$$year.$$month.$$patch"; \
-	 gv=$$(git tag -l 'bindings/go/v0.*' | sed 's|.*/v||' | sort -t. -k2,2n -k3,3n | tail -1); \
-	 gmin=$$(echo "$$gv" | sed -nE 's/^0\.([0-9]+)\.[0-9]+$$/\1/p'); \
-	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
-	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then \
-	   echo "release: cannot read the Go module version from the tags (last: '$$gv')"; exit 1; \
-	 fi; \
-	 if [ "$(GO_MINOR)" = "1" ]; then \
-	   gmin=$$((gmin + 1)); \
-	   gpat=0; \
-	 else \
-	   gpat=$$((gpat + 1)); \
-	 fi; \
-	 gotag="bindings/go/v0.$$gmin.$$gpat"; \
-	 echo "release: would tag v$$version and $$gotag"; \
-	 test -f "docs/release-notes/v$$version.md" || { echo "release: docs/release-notes/v$$version.md missing -- write the notes first"; exit 1; }; \
-	 sed -i.bak -E "s/^version = \".*\"/version = \"$$version\"/" pyproject.toml && rm -f pyproject.toml.bak; \
-	 sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$$version\"/" bindings/python/real/__init__.py && rm -f bindings/python/real/__init__.py.bak; \
-	 vmaj=$$(echo "$$version" | cut -d. -f1); vmin=$$(echo "$$version" | cut -d. -f2); vpat=$$(echo "$$version" | cut -d. -f3); \
+# The calendar release (SciForge's make/release.mk, included at the end): YYYY.M.PATCH, the patch reset each month (PEP
+# 440 drops leading zeros, so 2026.6.1, never 2026.06.001). The release's notes are written as the work lands, in
+# docs/release-notes/unreleased.md (its first line `# Unreleased — <title>`), and the train's entry under CHANGELOG.md's
+# `## Unreleased`; release-bump names the notes v<version>.md, bumps every version-checked file (pyproject, __init__,
+# version.hpp, Cargo.toml, CITATION.cff, README's GIT_TAG; CMakeLists.txt derives from pyproject) and re-vendors Go.
+# The engine tag and the co-located Go module's (go-release-tag) are cut on the release commit, annotated with the
+# notes (release-tag-body), which release.yml publishes on the Releases page. The Go module's MINOR is read from its
+# newest tag, never assumed (hardcoded, the first release after an incompatible Go change would have shipped it as a
+# PATCH, which `go get -u` delivers silently); a minor bump is a human decision: GO_MINOR=1.
+release-bump:
+	@test -n "$(VERSION)" || { echo "release-bump: VERSION= is required"; exit 1; }
+	@test -f docs/release-notes/unreleased.md || { echo "release-bump: docs/release-notes/unreleased.md is missing -- write the notes first"; exit 1; }
+	@head -1 docs/release-notes/unreleased.md | grep -q '^# Unreleased — ' \
+	  || { echo "release-bump: docs/release-notes/unreleased.md must begin '# Unreleased — <title>'"; exit 1; }
+	@sed -E "1s/^# Unreleased — /# v$(VERSION) — /" docs/release-notes/unreleased.md > docs/release-notes/v$(VERSION).md \
+	  && rm docs/release-notes/unreleased.md
+	@sed -i.bak -E "s/^version = \".*\"/version = \"$(VERSION)\"/" pyproject.toml && rm -f pyproject.toml.bak
+	@sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$(VERSION)\"/" bindings/python/real/__init__.py && rm -f bindings/python/real/__init__.py.bak
+	@vmaj=$$(echo "$(VERSION)" | cut -d. -f1); vmin=$$(echo "$(VERSION)" | cut -d. -f2); vpat=$$(echo "$(VERSION)" | cut -d. -f3); \
 	 sed -i.bak -E "s/^#define REAL_VERSION_MAJOR .*/#define REAL_VERSION_MAJOR $$vmaj/; \
 	                s/^#define REAL_VERSION_MINOR .*/#define REAL_VERSION_MINOR $$vmin/; \
-	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak; \
-	 sed -i.bak -E "1,/^version = /s/^version = \".*\"/version = \"$$version\"/" bindings/rust/Cargo.toml && rm -f bindings/rust/Cargo.toml.bak; \
-	 sed -i.bak -E "s/^version: \".*\"/version: \"$$version\"/" CITATION.cff && rm -f CITATION.cff.bak; \
-	 reldate=$$(date +%Y-%m-%d); \
-	 sed -i.bak -E "s/^date-released: \".*\"/date-released: \"$$reldate\"/" CITATION.cff && rm -f CITATION.cff.bak; \
-	 sed -i.bak -E "s/GIT_TAG v[0-9][0-9.]*/GIT_TAG v$$version/" README.md && rm -f README.md.bak; \
-	 $(MAKE) go-vendor; \
-	 git add pyproject.toml bindings/python/real/__init__.py include/real/version.hpp \
-	         bindings/rust/Cargo.toml CITATION.cff README.md \
-	         bindings/go/vendor_include docs/BENCHMARKS.md docs/release-notes/; \
-	 if [ "$(DRY_RUN)" = "1" ]; then \
-	   echo "release: DRY RUN -- tree bumped+staged for v$$version; STOPPED before commit/tag/push."; \
-	   echo "release: would tag v$$version and $$gotag"; \
-	   echo "release: verify with 'make version-check go-check-vendor'."; \
-	   echo "release: TO REVERT, back up the two human inputs FIRST -- this dry run STAGED them, so they are"; \
-	   echo "  no longer untracked and 'git reset --hard' DELETES the notes file and reverts the BENCHMARKS.md"; \
-	   echo "  stamp. Recovering a staged-then-reset file needs 'git fsck --lost-found'; copying it costs nothing:"; \
-	   echo "    cp docs/release-notes/v$$version.md docs/BENCHMARKS.md /tmp/ && git reset --hard"; \
-	   exit 0; \
-	 fi; \
-	 body=$$(mktemp); printf 'release: v%s\n\n' "$$version" > "$$body"; cat "$(BODY)" >> "$$body"; \
-	 git commit -F "$$body"; rm -f "$$body"; \
-	 git tag "v$$version"; \
-	 git tag "$$gotag"; \
-	 git push origin HEAD "v$$version" "$$gotag"
+	                s/^#define REAL_VERSION_PATCH .*/#define REAL_VERSION_PATCH $$vpat/" include/real/version.hpp && rm -f include/real/version.hpp.bak
+	@sed -i.bak -E "1,/^version = /s/^version = \".*\"/version = \"$(VERSION)\"/" bindings/rust/Cargo.toml && rm -f bindings/rust/Cargo.toml.bak
+	@sed -i.bak -E "s/^version: \".*\"/version: \"$(VERSION)\"/" CITATION.cff && rm -f CITATION.cff.bak
+	@sed -i.bak -E "s/^date-released: \".*\"/date-released: \"$$(date +%Y-%m-%d)\"/" CITATION.cff && rm -f CITATION.cff.bak
+	@sed -i.bak -E "s/GIT_TAG v[0-9][0-9.]*/GIT_TAG v$(VERSION)/" README.md && rm -f README.md.bak
+	@$(MAKE) --no-print-directory go-vendor
+
+go-release-tag:
+	@gv=$$(git tag -l 'bindings/go/v0.*' | sed 's|.*/v||' | sort -t. -k2,2n -k3,3n | tail -1); \
+	 gmin=$$(echo "$$gv" | sed -nE 's/^0\.([0-9]+)\.[0-9]+$$/\1/p'); \
+	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
+	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then echo "go-release-tag: cannot read the Go module version from the tags (last: '$$gv')" >&2; exit 1; fi; \
+	 if [ "$(GO_MINOR)" = "1" ]; then gmin=$$((gmin + 1)); gpat=0; else gpat=$$((gpat + 1)); fi; \
+	 echo "bindings/go/v0.$$gmin.$$gpat"
+
+release-tag-body:
+	@cat docs/release-notes/v$(VERSION).md
 
 clean: ## [daily] Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist
@@ -1157,3 +1121,12 @@ QUALITY_RELEASE := check-bench-stamp check-fixed-cost check-sabotage check-blind
                    exhaustive-compat fuzz-routes rust-test rust-clippy rust-publish-check python-test stubtest-or-skip \
                    go-or-skip lint-gate test-gcc-or-skip sanitize coverage-check
 -include $(SCIFORGE_MAKE)/quality.mk
+
+# The calendar release every SciForge project cuts (the sibling checkout's make/release.mk).
+RELEASE_NOTES      := CHANGELOG.md
+RELEASE_FILES      := pyproject.toml bindings/python/real/__init__.py include/real/version.hpp bindings/rust/Cargo.toml \
+                      CITATION.cff README.md bindings/go/vendor_include/ docs/release-notes/
+RELEASE_EXTRA_TAGS := go-release-tag
+RELEASE_TAG_BODY   := release-tag-body
+RELEASE_CI         := ci.yml
+-include $(SCIFORGE_MAKE)/release.mk
