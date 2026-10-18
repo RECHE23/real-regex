@@ -67,6 +67,8 @@ include $(ROOT)/mk/common.mk
 # Vendored in-repo (see mk/help.mk for why this is never a hard include toward sciforge).
 include mk/help.mk
 
+.PHONY: gate-skips-reset gate-skips-report docs-site-gate-or-skip misra-x86-root stubtest-or-skip go-or-skip lint-gate \
+        test-gcc-or-skip lint-changed-root push-tools push-docs push-engine
 .PHONY: all build test sanitize coverage coverage-build coverage-html coverage-check \
 	full-local-gate-impl gcc-check route-probe alloc-probe alloc-cold-probe ac-regime sabotage-sweep sabotage-help check-blind-guard blind-guards \
         lint misra check-state-zeroing check-percall-copies check-fixed-cost route-surface-parity bench-compilers fuzz fuzz-compat fuzz-compat-known fuzz-re2 fuzz-pcre2 fuzz-routes check-capi-abi check-abi-bump check-features-probe exhaustive-compat exhaustive-compat-flags fowler-compat check-pins tsan tsan-core doc doc-no-coverage doc-check doc-site-xml doc-xml docs-site docs-site-gate format format-check full-local-gate check-commit check-push check-release check-touched-bindings gate-bump gate-doc gate-test clean \
@@ -781,244 +783,21 @@ check-touched-bindings: ## [gates] Each binding's tests, for the bindings the di
 	@$(if $(call touched,bindings/c bindings/go),$(if $(shell command -v go),$(MAKE) go-check-vendor && $(MAKE) go-test,echo "bindings: go absent -- CI runs the Go leg"),echo "bindings: go untouched")
 	@$(if $(call touched,bindings/c),$(MAKE) c-test,echo "bindings: C untouched")
 
-check-commit: ## [gates] Before each commit: format, layers, the C++ suite, touched bindings (~1-3 min)
-	@$(MAKE) format-check
-	@$(MAKE) check-layers
-	@$(MAKE) test
-	@$(MAKE) check-touched-bindings
-	@echo "check-commit: PASS"
+# The verification tiers (SciForge's make/quality.mk, included at the end): check-commit, check-push and check-release
+# run QUALITY_COMMIT, then QUALITY_PUSH, then QUALITY_RELEASE, under one lock per tree and void if the tree moves.
+# check-push runs the checks whose input the diff against GATE_BASE touches (the push-* steps decide); check-release
+# runs every check, the former full-local-gate. Steps that skip an optional leg record it in GATE_SKIPS: the ledger is
+# reset first (gate-skips-reset) and read last (gate-skips-report), and GATE_STRICT=1 refuses to pass with any open.
 
-check-push: ## [gates] Before each push: every check whose input the diff touches, plus coverage
-	@echo "── cheap checks"
-	@$(MAKE) format-check check-workflows version-check check-layers check-public-tu check-no-simd check-sse2-floor \
-	   check-state-zeroing check-percall-copies python-syntax check-abi3-floor check-pins check-capi-abi check-abi-bump
-	@$(MAKE) doc-no-coverage
-	@$(MAKE) check-doc-style check-site-anchors check-doc-mirror check-tolerated-count check-stdlib-attribution \
-	   check-doxygen-pin check-apt-bound check-go-version-labels
-	@$(MAKE) doc-site-xml
-	@$(MAKE) check-doc-voice check-curated-members check-bench-ratios
-	@$(if $(call touched,tools),$(MAKE) check-sabotage && $(MAKE) check-blind-guard,echo "check-push: tools/ untouched -- harness checks skipped")
-	@$(if $(call touched,docs),$(if $(shell command -v $(SPHINXBUILD)),$(MAKE) docs-site-gate,echo "check-push: $(SPHINXBUILD) absent (make gate-venv)" && exit 1),echo "check-push: docs/ untouched -- docs-site-gate skipped")
-	@echo "── lint (headers TU + changed tests)"
-	@$(MAKE) -C tools lint-changed GATE_BASE=$(GATE_BASE)
-	@$(if $(call touched,include),echo "── engine checks (include/ touched)" && $(MAKE) check-fixed-cost && $(MAKE) doc-check && $(MAKE) gcc-check \
-	   && $(MAKE) misra && $(MAKE) -C tools misra-x86 && $(MAKE) c-test && $(MAKE) example-check && $(MAKE) matrix-gate \
-	   && $(MAKE) fowler-compat && $(MAKE) exhaustive-compat && $(MAKE) fuzz-routes && $(MAKE) python-test \
-	   && { if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor; else echo "check-push: go absent -- CI checks the vendored headers"; fi; },echo "check-push: include/ untouched -- engine checks skipped")
-	@echo "── test"
-	@$(MAKE) test
-	@echo "── bindings"
-	@$(MAKE) check-touched-bindings
-	@echo "── coverage"
-	@$(MAKE) coverage
-	@echo "check-push: PASS"
-
-check-release: ## [gates] Before each release: full-local-gate, then coverage
-	@$(MAKE) full-local-gate
-	@echo "── coverage"
-	@$(MAKE) coverage
-	@echo "check-release: PASS"
-
-# A lock serialises gates: two in one tree share build/ and contend for the machine, and step 12
-# (matrix-gate) is a TIMING bench whose red cells mean "slower than the pinned figure" -- under
-# contention it reads red for a reason the code has nothing to do with, and a false red there is
-# indistinguishable from a true one.
-#
-# The lock records its holder's pid, because the trap below covers EXIT/INT/TERM and not SIGKILL:
-# a gate killed by a harness timeout -- which happened three times in one session -- left the
-# directory behind and every later gate refused until someone read the message and ran rmdir by
-# hand. A lock whose holder is gone is now reclaimed automatically, and one whose holder is ALIVE
-# is still respected: `kill -0` distinguishes them, so this cannot break a running gate.
-#
-# The lock also snapshots HEAD *and* `git status --porcelain`, and compares both at the end: a gate
-# whose tree moved under it has not judged anything. Early steps read one tree and late steps
-# another, so its red can be a half-finished edit and its green can have skipped the very change it
-# was run for -- both happened in one session, and the second time a compile error in a test file
-# made the gate red for a reason the committed tree did not have. The lock stops a second GATE;
-# nothing stops an editor.
-#
-# HEAD belongs in that snapshot and porcelain alone is not enough, because the likeliest thing to
-# happen during a 30-minute gate is a COMMIT: staging turns a dirty tree clean, so porcelain reads
-# identical at both ends while every step after the commit compiled different sources. That is the
-# exact failure this check exists to catch, and it was blind to it.
-full-local-gate: ## [gates] Every pass/fail gate in one command (the macOS gate of record; GATE_STRICT=1 refuses to pass with any step skipped)
-	@mkdir -p $(BUILD); lock="$(BUILD)/.gate.lock"; \
-	 if ! mkdir "$$lock" 2>/dev/null; then \
-	   holder="$$(cat "$$lock/pid" 2>/dev/null || true)"; \
-	   if [ -n "$$holder" ] && ! kill -0 "$$holder" 2>/dev/null; then \
-	     echo "full-local-gate: reclaiming $$lock -- its holder (pid $$holder) is gone."; \
-	     rm -rf "$$lock"; mkdir "$$lock" || exit 1; \
-	   else \
-	     if [ -n "$$holder" ]; then \
-	       echo "full-local-gate: REFUSING -- another gate already holds $$lock (pid $$holder, alive)."; \
-	     else \
-	       echo "full-local-gate: REFUSING -- another gate already holds $$lock (no pid recorded:"; \
-	       echo "  either a gate that started before this check existed, or one caught between"; \
-	       echo "  mkdir and writing its pid). Not reclaimed: reclaiming needs PROOF the holder is"; \
-	       echo "  gone, and an absent pid is not proof. Wait, or rmdir it once you know."; \
-	     fi; \
-	     echo "  Two gates in one tree share build/ and contend for the machine, and step 12 is"; \
-	     echo "  matrix-gate: a TIMING bench whose red cells mean 'slower than the pinned figure'."; \
-	     echo "  Under contention it reads red for a reason the code has nothing to do with, and a"; \
-	     echo "  false red there is indistinguishable from a true one. Wait for that run."; \
-	     exit 1; \
-	   fi; \
-	 fi; \
-	 echo $$$$ > "$$lock/pid"; \
-	 { git rev-parse HEAD; git status --porcelain; } > "$$lock/tree" 2>/dev/null || true; \
-	 trap 'rm -rf "$$lock" 2>/dev/null || true' EXIT INT TERM; \
-	 $(MAKE) full-local-gate-impl; rc=$$?; \
-	 if ! { git rev-parse HEAD; git status --porcelain; } 2>/dev/null | diff -q - "$$lock/tree" >/dev/null 2>&1; then \
-	   echo ""; \
-	   echo "full-local-gate: THE TREE CHANGED WHILE THIS GATE RAN -- the verdict above is void."; \
-	   echo "  Early steps read one tree and late steps another, so a red may be someone else's"; \
-	   echo "  half-finished edit and a green may have skipped what you wanted checked. The lock"; \
-	   echo "  stops a second GATE; nothing stops an editor. Re-run on a still tree."; \
-	   exit 1; \
-	 fi; \
-	 exit $$rc
-
-full-local-gate-impl:
-	@echo "full-local-gate: start (fail-fast — cheap first, first red stops the train)"
+gate-skips-reset:
 	@mkdir -p $(dir $(GATE_SKIPS)) && : > $(GATE_SKIPS)
-	@echo "── [1/25] format-check"
-	@$(MAKE) format-check
-	@echo "── [2/25] check-workflows (actionlint over .github/workflows)"
-	@$(MAKE) check-workflows
-	@echo "── [3/25] version-check"
-	@$(MAKE) version-check
-# Complements version-check's bench-stamp line, which compares VERSION STRINGS and so only fires
-# across a release bump. This one asks whether the engine changed in substance since the figures
-# were stamped -- the case that actually happens between releases, and the one that let a closed
-# deficit stay documented as open (d7d9485). Warns, never fails: benchmarks cannot be re-run per
-# commit. Local only -- it reads git history, which a CI shallow clone does not have.
-	@echo "── [3b/25] check-bench-stamp (engine moved since the benchmarks were stamped?)"
-	@$(MAKE) check-bench-stamp
-	@echo "── [4/25] check-layers"
-	@$(MAKE) check-layers
-	@echo "── [5/25] check-no-simd (no vector ISA macro — the hole CI's 32-bit leg caught)"
-	@$(MAKE) check-no-simd
-	@echo "── [5c/25] check-sse2-floor (x86-64 with SSE2 but no AVX2; skips off x86)"
-	@$(MAKE) check-sse2-floor
-	@echo "── [5b/25] check-state-zeroing (gcc bulk-zeroes the VM state if a member array returns)"
-	@$(MAKE) check-state-zeroing
-	@echo "── [5d/25] check-percall-copies (count_walk must pass the intent, not a mutated 440-byte view)"
-	@$(MAKE) check-percall-copies
-	@echo "── [5e/25] check-fixed-cost (sizes and per-call instructions against their stamps)"
-	@$(MAKE) check-fixed-cost
-	@echo "── [5f/25] python-syntax (bindings/python at the requires-python floor)"
-	@$(MAKE) python-syntax
-	@echo "── [5g/25] check-abi3-floor (the four floor declarations agree)"
-	@$(MAKE) check-abi3-floor
-	@echo "── [6/25] check-pins"
-	@$(MAKE) check-pins
-	@echo "── [7/25] check-capi-abi (C ABI golden vs real_capi.h)"
-	@$(MAKE) check-capi-abi
-	@echo "── [7a/25] check-abi-bump (an incompatible C ABI change moves REAL_ABI_VERSION)"
-	@$(MAKE) check-abi-bump
-	@echo "── [8/25] doc-no-coverage (Doxygen WARN_AS_ERROR — fast, high signal)"
-	@$(MAKE) doc-no-coverage
-# Comment-FORM gate, deliberately right after doc-no-coverage: that step runs the LOCAL
-# doxygen, so build/doc/xml is fresh here. It has to be, and the script enforces it --
-# reading a stale XML made an earlier run report a false clean (line numbers drift, every
-# entry fails the shape check, nothing is flagged). doc-check below cannot serve instead:
-# it runs the CI Doxygen inside Docker and never refreshes the local XML.
-	@echo "── [7b/25] check-doc-style (objects /*! */, attributes //!<)"
-	@$(MAKE) check-doc-style
-	@echo "── [7c/25] check-site-anchors (site slices resolve in their sources)"
-	@$(MAKE) check-site-anchors
-	@echo "── [7c2/25] check-doc-mirror (2 mirrored pages vs their canons; 3 distilled ones path-checked)"
-	@$(MAKE) check-doc-mirror
-	@echo "── [7c2b/25] check-tolerated-count (4 live pages vs the count exhaustive-compat pins)"
-	@$(MAKE) check-tolerated-count
-	@echo "── [7c2c/25] check-stdlib-attribution (a libstdc++-only behaviour is named, not called std)"
-	@$(MAKE) check-stdlib-attribution
-	@echo "── [7c2d/25] check-doxygen-pin (the publishing workflows pin 1.9.8, with a witness)"
-	@$(MAKE) check-doxygen-pin
-	@echo "── [7c2d2/25] check-apt-bound (workflows refresh only Ubuntu apt indexes)"
-	@$(MAKE) check-apt-bound
-	@echo "── [7c2e/25] check-go-version-labels (the Go pages carry the module's live minor)"
-	@$(MAKE) check-go-version-labels
-	@echo "── [7c3/25] check-sabotage (SIGTERM a run in flight; the canary must come back)"
-	@$(MAKE) check-sabotage
-	@echo "── [7c4/25] check-blind-guard (the blinding harness tells driven, undriven and crashing arms apart)"
-	@$(MAKE) check-blind-guard
-	@echo "── [7d/25] doc-site-xml + check-doc-voice + check-curated-members"
-	@$(MAKE) doc-site-xml
-	@$(MAKE) check-doc-voice
-	@$(MAKE) check-curated-members
-# Arithmetic, so it belongs in the cheap section beside the other doc gates: it re-derives every
-# ratio in BENCHMARKS.md §A/§E/§Unicode from the ns/B pair beside it AND every range, per-row pair
-# and count in §A's reading bullets from the cells above them. The prose half is the one that
-# matters -- checking cells alone reported OK for three stamps while every bullet was stale.
-	@echo "── [8b/25] check-bench-ratios (§A/§E/§Unicode ratios, and §A's prose against its cells)"
-	@$(MAKE) check-bench-ratios
-	@echo "── [9/25] doc-check (CI-pinned Doxygen when Docker is available)"
-	@$(MAKE) doc-check
-	@echo "── [10/25] gcc-check (the diagnostics clang lacks — see the target)"
-	@$(MAKE) gcc-check
-# docs/site's own net (-W --keep-going + linkcheck). Same shape as the
-# GXX/go legs below: skipped with a warning when sphinx-build is absent (a dev
-# without the docs venv on PATH doesn't need to rougir tout le gate) -- the docs-site
-# CI job (ci.yml) is the backstop, so this is never the ONLY net on the site.
-	@echo "── [11/25] docs-site-gate (sphinx -W --keep-going + linkcheck; skipped if sphinx-build absent)"
-	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) docs-site-gate; else echo "step 11: docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
-	@echo "── [12/25] misra (single synthetic TU)"
-	@$(MAKE) misra
-	@echo "── [12b/25] misra-x86 (the same TU for x86-64, where the ISA-chosen bodies compile)"
-	@$(MAKE) -C tools misra-x86
-	@echo "── [13/25] c-test"
-	@$(MAKE) c-test
-# examples/cpp/*.cpp direct compile+run -- unconditional, not
-# skip-if-absent: unlike the OPTIONAL alternate-compiler/toolchain legs below (GXX, go,
-# sphinx-build), a default C++ compiler is already a hard prerequisite of this entire gate
-# (build/test/misra/c-test above assume one unconditionally), so example-check rides the
-# same assumption instead of the "warn and skip" shape reserved for genuinely optional tools.
-	@echo "── [14/25] example-check (examples/cpp/*.cpp direct compile+run)"
-	@$(MAKE) example-check
-	@echo "── [15/25] matrix-gate"
-	@$(MAKE) matrix-gate
-	@echo "── [16/25] fowler-compat"
-	@$(MAKE) fowler-compat
-	@echo "── [17/25] exhaustive-compat"
-	@$(MAKE) exhaustive-compat
-	@echo "── [17b/25] fuzz-routes (every route against the general VM, generated patterns, fixed seeds)"
-	@$(MAKE) fuzz-routes
-	@echo "── [18/25] test (default CXX; refuses a binary older than the headers)"
-	@$(MAKE) test
-	@echo "── [19/25] rust-test + rust-clippy (every clippy warning an error)"
-	@$(MAKE) rust-test
-	@$(MAKE) rust-clippy
-	@echo "── [20/25] rust-publish-check"
-	@$(MAKE) rust-publish-check
-	@echo "── [21/25] python-test + python-stubtest (.pyi ≡ runtime; skipped if mypy absent)"
-	@$(MAKE) python-test
-	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then \
-	   $(MAKE) python-stubtest; \
-	 else echo "step 21: python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
-# Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails
-# on drift — it does not write the tree. The one binding NOT otherwise in this gate
-# (its sources are vendored, not built from include/ here). Skipped with a warning when
-# go is absent (the CI go job is the backstop), same shape as the GCC leg.
-	@echo "── [22/25] go-check-vendor + go-test (Go leg; skipped if go absent)"
-	@if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor && $(MAKE) go-test; else echo "step 22: go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
-	@echo "── [23/25] lint"
-	@set -euo pipefail; \
-	  mkdir -p $(BUILD); \
-	  $(MAKE) lint 2>&1 | tee $(BUILD)/lint.log; \
-	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then \
-	    echo "full-local-gate: FAIL at lint (see $(BUILD)/lint.log)"; exit 1; \
-	  fi
-	@echo "── [24/25] test (GCC leg) + sanitize (slowest last)"
-	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "step 24: test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
-	@$(MAKE) sanitize
-	@echo "── [25/25] coverage-check (line floor $(COV_FLOOR)%; refuses a stale coverage binary)"
-	@$(MAKE) coverage-check
+
 # A SKIP IS NOT A PASS, and inside a numbered list it reads exactly like one -- which is how a
 # machine without sphinx-build ran this gate as "24 steps green" while step 10, the net for the
 # site, never executed. Each optional leg appends its own line as it skips, so this block only
 # reads a ledger and can never disagree with the branch that wrote it. The Unicode cross-oracle
 # is the one PROBE here: it skips inside the test run, not in a branch this file owns.
+gate-skips-report:
 	@$(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --self-test >/dev/null
 	@set -eu; \
 	 $(PYTHON) $(ROOT)/tools/check_unicode_oracle.py --print-skip >> $(GATE_SKIPS) \
@@ -1026,18 +805,59 @@ full-local-gate-impl:
 	 n=$$(awk 'END{print NR+0}' $(GATE_SKIPS) 2>/dev/null || echo 0); \
 	 if [ "$$n" -gt 0 ]; then \
 	   echo; \
-	   echo "full-local-gate: $$n STEP(S) DID NOT RUN -- unverified locally, not green:"; \
+	   echo "gate: $$n STEP(S) DID NOT RUN -- unverified locally, not green:"; \
 	   sed 's/^/  · /' $(GATE_SKIPS); \
 	   echo "  sphinx / mypy: 'make gate-venv'. The rest need docker / go / $(GXX) — CI runs those legs."; \
-	   echo "  Before a release, run GATE_STRICT=1 make full-local-gate -- it refuses to pass with any of these open."; \
+	   echo "  Before a release, run GATE_STRICT=1 make check-release -- it refuses to pass with any of these open."; \
 	   if [ -n "$${GATE_STRICT:-}" ]; then \
-	     echo "full-local-gate: REFUSED — GATE_STRICT is set and $$n step(s) were skipped."; \
+	     echo "gate: REFUSED — GATE_STRICT is set and $$n step(s) were skipped."; \
 	     exit 1; \
 	   fi; \
-	   echo "full-local-gate: the steps that RAN are green; $$n skipped above (CI covers those legs)"; \
+	   echo "gate: the steps that RAN are green; $$n skipped above (CI covers those legs)"; \
 	 else \
-	   echo "full-local-gate: ALL gates green, NONE skipped (cheap→doc→tests→lint→sanitize→coverage; first red would have stopped the train)"; \
+	   echo "gate: NONE skipped"; \
 	 fi
+
+# The steps that take arguments, wrap a tool or skip an optional leg, as targets of their own.
+docs-site-gate-or-skip:
+	@if command -v $(SPHINXBUILD) >/dev/null 2>&1; then $(MAKE) --no-print-directory docs-site-gate; else echo "docs-site-gate -- $(SPHINXBUILD) absent (sphinx: make gate-venv)" | tee -a $(GATE_SKIPS); fi
+
+misra-x86-root:
+	@$(MAKE) --no-print-directory -C tools misra-x86
+
+stubtest-or-skip:
+	@if $(MYPY_PYTHON) -c "import mypy" >/dev/null 2>&1; then $(MAKE) --no-print-directory python-stubtest; \
+	 else echo "python-stubtest (.pyi = runtime) -- mypy absent (make gate-venv)" | tee -a $(GATE_SKIPS); fi
+
+# Go leg: go-check-vendor diffs include/ against the committed vendor copy and fails on drift; it does not write the tree.
+go-or-skip:
+	@if command -v go >/dev/null 2>&1; then $(MAKE) --no-print-directory go-check-vendor && $(MAKE) --no-print-directory go-test; else echo "go-check-vendor + go-test -- go absent" | tee -a $(GATE_SKIPS); fi
+
+lint-gate:
+	@set -euo pipefail; mkdir -p $(BUILD); $(MAKE) --no-print-directory lint 2>&1 | tee $(BUILD)/lint.log; \
+	  if grep -qE 'warning:|error:' $(BUILD)/lint.log; then echo "lint-gate: FAIL (see $(BUILD)/lint.log)"; exit 1; fi
+
+test-gcc-or-skip:
+	@if command -v $(GXX) >/dev/null 2>&1; then $(MAKE) --no-print-directory test CXX=$(GXX) BUILD=$(BUILD)/gcc; else echo "test on the GCC leg -- $(GXX) absent" | tee -a $(GATE_SKIPS); fi
+
+lint-changed-root:
+	@$(MAKE) --no-print-directory -C tools lint-changed GATE_BASE=$(GATE_BASE)
+
+# What the push tier runs only when the diff against GATE_BASE touches its inputs.
+push-tools:
+	@$(if $(call touched,tools),$(MAKE) --no-print-directory check-sabotage && $(MAKE) --no-print-directory check-blind-guard,echo "push-tools: tools/ untouched -- harness checks skipped")
+
+push-docs:
+	@$(if $(call touched,docs),$(if $(shell command -v $(SPHINXBUILD)),$(MAKE) --no-print-directory docs-site-gate,echo "push-docs: $(SPHINXBUILD) absent (make gate-venv)" && exit 1),echo "push-docs: docs/ untouched -- docs-site-gate skipped")
+
+push-engine:
+	@$(if $(call touched,include),echo "── engine checks (include/ touched)" && $(MAKE) check-fixed-cost && $(MAKE) doc-check && $(MAKE) gcc-check \
+	   && $(MAKE) misra && $(MAKE) -C tools misra-x86 && $(MAKE) c-test && $(MAKE) example-check && $(MAKE) matrix-gate \
+	   && $(MAKE) fowler-compat && $(MAKE) exhaustive-compat && $(MAKE) fuzz-routes && $(MAKE) python-test \
+	   && { if command -v go >/dev/null 2>&1; then $(MAKE) go-check-vendor; else echo "push-engine: go absent -- CI checks the vendored headers"; fi; },echo "push-engine: include/ untouched -- engine checks skipped")
+
+full-local-gate: ## [gates] Every check (the release tier, by its former name; GATE_STRICT=1 refuses to pass with any step skipped)
+	@$(MAKE) --no-print-directory check-release
 
 # doc-check lives in docs/Makefile; thin delegation
 # below preserves the root-invocable name (full-local-gate step 7/22 above, and the
@@ -1319,3 +1139,21 @@ release: ## [release] Cut the complete calendar release (bump all, tag engine + 
 
 clean: ## [daily] Remove build artifacts
 	rm -rf $(BUILD) bindings/python/build bindings/python/real/*.so bindings/python/*.egg-info *.egg-info dist
+
+# The verification tiers every SciForge project shares (the sibling checkout's make/quality.mk). Optional, so a checkout
+# without the sibling (CI pins its own SciForge) still runs every other target.
+SCIFORGE_MAKE   ?= ../sciforge/make
+QUALITY_FIRST   := gate-skips-reset
+QUALITY_LAST    := gate-skips-report
+QUALITY_COMMIT  := format-check check-layers test check-touched-bindings
+QUALITY_PUSH    := check-workflows version-check check-public-tu check-no-simd check-sse2-floor check-state-zeroing \
+                   check-percall-copies python-syntax check-abi3-floor check-pins check-capi-abi check-abi-bump \
+                   doc-no-coverage check-doc-style check-site-anchors check-doc-mirror check-tolerated-count \
+                   check-stdlib-attribution check-doxygen-pin check-apt-bound check-go-version-labels doc-site-xml \
+                   check-doc-voice check-curated-members check-bench-ratios push-tools push-docs lint-changed-root \
+                   push-engine coverage
+QUALITY_RELEASE := check-bench-stamp check-fixed-cost check-sabotage check-blind-guard doc-check gcc-check \
+                   docs-site-gate-or-skip misra misra-x86-root c-test example-check matrix-gate fowler-compat \
+                   exhaustive-compat fuzz-routes rust-test rust-clippy rust-publish-check python-test stubtest-or-skip \
+                   go-or-skip lint-gate test-gcc-or-skip sanitize coverage-check
+-include $(SCIFORGE_MAKE)/quality.mk
