@@ -83,6 +83,14 @@ v2026.9.7 changed the Rust `RegexSet::matches` return type in a release that
 Cargo reads as compatible. That is the break this policy exists to prevent;
 the next change of its kind waits for `next`.
 
+## Release cadence
+
+One planned release a month, its first (`YEAR.MONTH.0`), carrying what the
+month brought. Between two, a release goes out for a correctness fix — a wrong
+match, a read past an operand, a crash, a broken guarantee — the day it is
+ready, carrying `main` as it is; additions and speed-ups wait for the next
+planned one. Dependents then follow one version a month, and a fix never waits.
+
 ## Correctness record
 
 The day of the last correctness finding — a wrong match, a read or write past
