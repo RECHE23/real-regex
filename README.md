@@ -121,6 +121,22 @@ installing. The [SciForge](https://github.com/RECHE23/sciforge) harness is neede
 only for the test suite and CI, never for the library — packagers configure with
 `-DBUILD_TESTING=OFF`.
 
+### Supported toolchains
+
+A C++20 compiler is required. These are the toolchains each push is built and tested with; an older one may work,
+and is not tested:
+
+| Toolchain | Where |
+| --- | --- |
+| GCC 14 | Linux x86-64: the test suite, under ASan and UBSan too |
+| Clang 18 | Linux x86-64: the test suite, under ASan and UBSan too |
+| GCC 13 (Ubuntu 24.04's) | Linux arm64: the CMake build, tests and install |
+| MSVC (Visual Studio 2022) | Windows x64: the CMake build, tests and install |
+| Apple Clang | macOS arm64: the test suite and sanitizers |
+| GCC 14, cross | i686 (32-bit `size_t`) and s390x (big-endian), the test suite statically linked under emulation |
+
+CMake 3.16 or newer; Python 3.11 or newer for the binding.
+
 ## Documentation
 
 The documentation site: <https://reche23.github.io/real-regex/>
