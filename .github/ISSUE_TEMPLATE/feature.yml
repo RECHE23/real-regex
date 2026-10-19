@@ -1,0 +1,16 @@
+name: Feature request
+description: Something REAL does not do yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need
+      description: The problem it solves, and how you work around it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: An API, a flag, a behaviour; and how another library does it, if one does.

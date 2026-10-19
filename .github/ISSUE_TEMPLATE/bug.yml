@@ -1,0 +1,39 @@
+name: Bug report
+description: A wrong answer, a crash, a hang, or a build that fails.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thanks for the report. A security issue goes through private reporting instead (see SECURITY.md), not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The REAL release (`pip show real-regex`, or the git tag or commit).
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system, processor, compiler and its version (or the Python version and the wheel).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest example that shows it — the pattern, its flags, the subject, and the match you expected (Python's `re`, PCRE2 or RE2 answer, if you know it).
+      render: text
+      placeholder: |
+        import real
+        print(real.search(r"a+b", "xaab"))
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+    validations:
+      required: true

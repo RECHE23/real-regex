@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/RECHE23/real-regex/security/advisories/new
+    about: Report a vulnerability privately, as SECURITY.md describes.
