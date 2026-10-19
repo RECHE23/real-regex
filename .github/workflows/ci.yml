@@ -404,6 +404,24 @@ jobs:
       - name: Build + vet + test (race detector on)
         run: make go-test
 
+  # The Rust crate's API against the last version on crates.io: the year is the major version, so within it no
+  # release may break the crate's public API (docs/site/developer/versioning.md); cargo-semver-checks fails on a
+  # removed or renamed item, a changed signature, a trait no longer implemented. Breaking work lives on `next`.
+  rust-semver:
+    needs: preflight
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install clang (the shim's cc-build)
+        run: sh tools/ci-apt-ubuntu.sh clang
+      - name: The crate's API against the published one
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: bindings/rust/Cargo.toml
+          release-type: minor
+
   # The third differential fuzzer: real-regex vs the regex crate (cargo-fuzz, nightly). A short smoke here;
   # the long run, with a corpus kept between runs, is fuzz-long.yml (weekly, and on demand).
   fuzz-rust:

@@ -1070,7 +1070,9 @@ uninstall: ## [release] Uninstall the Python package (pip)
 # The engine tag and the co-located Go module's (go-release-tag) are cut on the release commit, annotated with the
 # notes (release-tag-body), which release.yml publishes on the Releases page. The Go module's MINOR is read from its
 # newest tag, never assumed (hardcoded, the first release after an incompatible Go change would have shipped it as a
-# PATCH, which `go get -u` delivers silently); a minor bump is a human decision: GO_MINOR=1.
+# PATCH, which `go get -u` delivers silently); a minor bump is a human decision: GO_MINOR=1. gorelease judges the
+# version against the API's change since the last tag and refuses a patch that breaks it (SKIP_GO_API_CHECK=1 skips it):
+# on a copy of the module outside the repository, whose release bump is not committed yet, against the published base.
 release-bump:
 	@test -n "$(VERSION)" || { echo "release-bump: VERSION= is required"; exit 1; }
 	@test -f docs/release-notes/unreleased.md || { echo "release-bump: docs/release-notes/unreleased.md is missing -- write the notes first"; exit 1; }
@@ -1096,6 +1098,21 @@ go-release-tag:
 	 gpat=$$(echo "$$gv" | sed -nE 's/^0\.[0-9]+\.([0-9]+)$$/\1/p'); \
 	 if [ -z "$$gmin" ] || [ -z "$$gpat" ]; then echo "go-release-tag: cannot read the Go module version from the tags (last: '$$gv')" >&2; exit 1; fi; \
 	 if [ "$(GO_MINOR)" = "1" ]; then gmin=$$((gmin + 1)); gpat=0; else gpat=$$((gpat + 1)); fi; \
+	 if [ "$(SKIP_GO_API_CHECK)" != "1" ]; then \
+	   gorelease=$$(command -v gorelease || echo "$$(go env GOPATH 2>/dev/null)/bin/gorelease"); \
+	   test -x "$$gorelease" || { echo "go-release-tag: gorelease is needed to judge the Go API (go install golang.org/x/exp/cmd/gorelease@latest), or SKIP_GO_API_CHECK=1" >&2; exit 1; }; \
+	   copy=$$(mktemp -d); cp -R bindings/go/. "$$copy"/; \
+	   out=$$(cd "$$copy" && "$$gorelease" -base=github.com/RECHE23/real-regex/bindings/go@v$$gv -version=v0.$$gmin.$$gpat 2>&1); status=$$?; \
+	   rm -rf "$$copy"; \
+	   if [ $$status -ne 0 ]; then \
+	     printf '%s\n' "$$out" >&2; \
+	     echo "go-release-tag: v0.$$gmin.$$gpat does not fit the Go API's change since v$$gv (an incompatible change takes a new minor: GO_MINOR=1)" >&2; exit 1; \
+	   fi; \
+	   if [ "$(GO_MINOR)" != "1" ] && printf '%s\n' "$$out" | grep -q '^## incompatible changes'; then \
+	     printf '%s\n' "$$out" >&2; \
+	     echo "go-release-tag: the Go API changed incompatibly since v$$gv, which v0 allows in a patch and this module does not: GO_MINOR=1" >&2; exit 1; \
+	   fi; \
+	 fi; \
 	 echo "bindings/go/v0.$$gmin.$$gpat"
 
 release-tag-body:

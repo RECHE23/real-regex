@@ -81,7 +81,11 @@ module moves to `v1` once its API has held through a year.
 
 v2026.9.7 changed the Rust `RegexSet::matches` return type in a release that
 Cargo reads as compatible. That is the break this policy exists to prevent;
-the next change of its kind waits for `next`.
+the next change of its kind waits for `next`. Two checks now hold it: CI
+compares the Rust crate's API on `main` with the last version on crates.io
+(`cargo-semver-checks`, the `rust-semver` job), and `make release` judges the
+Go module's next version against its API's change since the last tag
+(`gorelease`, in `go-release-tag`), refusing a patch that breaks it.
 
 ## Release cadence
 

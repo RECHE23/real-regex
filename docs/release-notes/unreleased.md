@@ -6,3 +6,7 @@
   (`make check-commit`, `check-push`, `check-release`, `make release`). The engine, its bindings and their packages are
   unchanged. `check-release` runs every check the former `full-local-gate` ran (which is now its name for the release
   tier); the release's notes are written as the work lands, and its tags carry them.
+- **Development only: the bindings' API is checked against what was published.** CI compares the Rust crate's public
+  API with the last version on crates.io (`cargo-semver-checks`; within a year no release may break it), and
+  `make release` refuses a Go module patch whose API changed incompatibly since its last tag (`gorelease`; such a
+  change takes `GO_MINOR=1`).
