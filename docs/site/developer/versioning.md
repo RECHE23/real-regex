@@ -26,7 +26,9 @@ Everything else is outside the promise:
 - **Internal** — `real::detail`, `real::prof`, and every name the reference
   does not show. They change in any release.
 - **Experimental** — public names listed with a reason in
-  `docs/site/reference/unpublished.yaml` (for example `real::dfa_munch_memo`).
+  `docs/site/reference/unpublished.yaml` as experimental (for example
+  `basic_regex::find_iter_longest`). A class marked `publish_all` there, such as
+  `real::dfa_munch_memo`, is published whole, and stable.
   They may change in any release until they are published; the release notes
   say when one does.
 
@@ -80,3 +82,16 @@ module moves to `v1` once its API has held through a year.
 v2026.9.7 changed the Rust `RegexSet::matches` return type in a release that
 Cargo reads as compatible. That is the break this policy exists to prevent;
 the next change of its kind waits for `next`.
+
+## Correctness record
+
+The day of the last correctness finding — a wrong match, a read or write past
+an operand, a crash or a hang — in a released version, and the release that
+fixed it. REAL is called mature once six weeks have passed without one, six
+weekly long fuzzing campaigns green (`.github/workflows/fuzz-long.yml`) beside
+the differential oracles (PCRE2, RE2, Python's `re`, Go's
+`regexp`).
+
+| Last finding | What | Fixed in |
+| --- | --- | --- |
+| 2026-10-15 | a read one byte past the subject, a lost match in bytes mode, a signed overflow in `\U`, found by the long fuzzing campaign | 2026.10.16 |
