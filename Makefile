@@ -1129,4 +1129,6 @@ RELEASE_FILES      := pyproject.toml bindings/python/real/__init__.py include/re
 RELEASE_EXTRA_TAGS := go-release-tag
 RELEASE_TAG_BODY   := release-tag-body
 RELEASE_CI         := ci.yml
+# ci.yml's paths-ignore: a HEAD changed in those paths alone is judged by ci.yml's run before it.
+RELEASE_CI_IGNORED := *.md docs/* .github/workflows/docs.yml .github/workflows/docs-site.yml
 -include $(SCIFORGE_MAKE)/release.mk
