@@ -89,11 +89,10 @@ Go module's next version against its API's change since the last tag
 
 ## Release cadence
 
-One planned release a month, its first (`YEAR.MONTH.0`), carrying what the
-month brought. Between two, a release goes out for a correctness fix — a wrong
-match, a read past an operand, a crash, a broken guarantee — the day it is
-ready, carrying `main` as it is; additions and speed-ups wait for the next
-planned one. Dependents then follow one version a month, and a fix never waits.
+A change goes out when it is ready: a correctness fix, an addition or a speed-up is released as soon as the release
+checks pass (`make check-release`), carrying `main` as it is. Only a change that can break existing code waits: it is
+announced under **Breaking** in the CHANGELOG's `## Unreleased` section and released with the first release of a month
+(`YEAR.MONTH.0`), so that the releases within a month only add, speed up and fix.
 
 ## Correctness record
 
