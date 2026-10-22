@@ -72,6 +72,7 @@ namespace real::detail {
     dfa_span_batches,            //!< Batches the lazy-DFA span filler produced.
     dfa_leases_taken,            //!< DFA set leases taken.
     class_folds,                 //!< Case folds the compiler computed for a class (a fold-cache hit costs none).
+    prefix_dfa_walks,            //!< Anchored matches without groups the forward DFA's anchored walk answered.
     count_                       //!< The number of counters.
   };
 

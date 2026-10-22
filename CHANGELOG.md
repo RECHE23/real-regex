@@ -4,8 +4,13 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 
 ## Unreleased
 
-Nothing in this train touches the engine or a binding; **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` +
-tree `461648d8`.**
+**THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
+- **§A / §E / §Unicode / §B**: one route added, on no benchmarked row (every row searches, finds, substitutes or
+  splits): an anchored `match()` of a pattern without groups, with 512 bytes or more ahead, takes the forward lazy
+  DFA's anchored walk where it ran the Pike VM — a tokenizer's `match(text, pos)` loop over `#[^\n]*` comments
+  122 → 6 ns a byte, identifiers 84 → 45 ns a call (M1 Pro). `bench-layout` and `bench-layout-min` judge every row
+  indistinguishable from layout noise on arm64 and x86-64. The UTF-8 trie's memo bucket is cast to `std::size_t` (the same
+  value), where i686's `-Wconversion` refused the implicit narrowing.
 
 ## v2026.10.17
 

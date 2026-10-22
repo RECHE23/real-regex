@@ -528,6 +528,54 @@ TEST(lazy_dfa_routing_full_differential_vs_pure_pike)
   }
 }
 
+// An anchored match without groups takes the forward DFA's anchored walk once 512 bytes or more lie ahead (a
+// tokenizer's `match(text, pos)` loop), and answers what the VM alone does: empty matches, the first alternative
+// that matches rather than the longest, lazy quantifiers, Unicode classes, anchors, hits and misses, at every
+// offset; nearer the end, and on a pattern with groups, the walk stays out.
+TEST(lazy_dfa_prefix_match_differential_vs_pure_pike)
+{
+  const char* const pats[] {
+    R"(#[^\n]*)", R"([A-Za-z_][A-Za-z0-9_]*)", R"([a-z]*)", R"(x?)", R"(a|ab)", R"(ab|a)", R"(a+?)", R"(.*?z)",
+    R"((?:\w+)\s*=)", R"(\d+(?:\.\d+)?)", R"(\w+)", R"((?m)^\w+$)", R"(\S+)", R"([^ ]+ )"};
+  std::vector<std::string> texts;
+  auto                     repeat {[](const std::string& unit, int n) {
+                                     std::string t;
+                                     for (int i = 0; i < n; ++i) {
+                                       t += unit;
+                                     }
+                                     return t;
+                                   }};
+  texts.emplace_back(repeat("# a comment, 12.5\nab = 3 a abz xx_9 = 7.25 ", 40));
+  texts.emplace_back(repeat("caf\xC3\xA9 R\xC3\x89SUM\xC3\x89 \xCE\xB1\xCE\xB2 = 12 z\n", 40));
+  texts.emplace_back(std::string(1500, 'a') + "b");
+  real::detail::tally(real::detail::counter::prefix_dfa_walks) = 0;
+  for (const char* const pat : pats) {
+    const real::regex rx {pat};
+    for (const std::string& t : texts) {
+      for (std::size_t pos {0}; pos <= t.size(); pos += 7) {
+        const auto routed {rx.match(t, pos)};
+        real::detail::lazy_dfa_route_disabled() = true;
+        const auto pike   {rx.match(t, pos)};
+        real::detail::lazy_dfa_route_disabled() = false;
+        EXPECT_EQ(routed.matched(), pike.matched());
+        if (routed.matched() && pike.matched()) {
+          EXPECT_EQ(routed.start(), pike.start());
+          EXPECT_EQ(routed.end(), pike.end());
+        }
+      }
+    }
+  }
+  EXPECT(real::detail::tally(real::detail::counter::prefix_dfa_walks).load() > 0U);
+  // a pattern with groups fills them on its own routes, and a short subject stays on the VM
+  real::detail::tally(real::detail::counter::prefix_dfa_walks) = 0;
+  const real::regex grouped   {R"(([a-z]+)=(\d+))"};
+  const std::string long_text {repeat("ab=12 ", 200)};
+  EXPECT_EQ(grouped.match(long_text, 0)[2], std::string_view {"12"});
+  const real::regex plain     {R"([a-z]+)"};
+  EXPECT_EQ(plain.match(std::string_view {"abc def"}, 4).end(), 7U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::prefix_dfa_walks).load(), std::uint64_t {0});
+}
+
 TEST(range_intern_table_grows_and_keeps_every_key)
 {
   // The UTF-8 edge-range intern table doubles at half load rather than capping, so a program with many
