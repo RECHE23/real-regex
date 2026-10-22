@@ -190,9 +190,11 @@ if(MSVC)
     target_compile_options(real_tests_bin PRIVATE
         /W4 /WX /Zc:__cplusplus /EHsc /utf-8 /wd4268 /wd4269)
 else()
-    # -Wshadow is MSVC /W4's C4456/C4457/C4459 (a name hiding a local, a parameter or a global), which a
-    # POSIX-only local gate would otherwise first see in CI.
-    target_compile_options(real_tests_bin PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror)
+    # -Wshadow is MSVC /W4's C4456/C4457/C4459 (a name hiding a local, a parameter or a global), and
+    # -Wconversion -Wfloat-conversion its C4244/C4267 (a conversion that may lose data), which a POSIX-only
+    # local gate would otherwise first see in CI.
+    target_compile_options(real_tests_bin PRIVATE
+        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wfloat-conversion -Werror)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # Test-only, GCC-only: -Warray-bounds reports a false positive on the
         # small_vec union when its heap state is not visible to the optimizer;
@@ -247,7 +249,8 @@ target_compile_definitions(real_limits_bin PRIVATE
     REAL_MAX_PROGRAM_SIZE=256 REAL_MAX_DFA_STATES=16)
 set_target_properties(real_limits_bin PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 if(NOT MSVC)
-    target_compile_options(real_limits_bin PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(real_limits_bin PRIVATE
+        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wfloat-conversion -Werror)
 endif()
 add_test(NAME lowered_limits COMMAND $<TARGET_FILE:real_limits_bin>)
 if(NOT MSVC)
