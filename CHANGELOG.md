@@ -4,6 +4,8 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 
 ## Unreleased
 
+## 2026.10.18 — 2026-10-23
+
 **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
 - **§A / §E / §Unicode / §B**: one route added, on no benchmarked row (every row searches, finds, substitutes or
   splits): an anchored `match()` of a pattern without groups, with 512 bytes or more ahead, takes the forward lazy
