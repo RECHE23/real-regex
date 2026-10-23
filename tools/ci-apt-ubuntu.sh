@@ -39,7 +39,25 @@ sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
 # A mirror that stops answering hung every apt step until the job limit (four jobs on 2026-10-07, 20-30
 # minutes each): bound each connection and retry, so a stalled mirror fails or recovers in minutes.
 APT_NET="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3"
-# shellcheck disable=SC2086 # APT_NET is a list of options, split on purpose
-sudo apt-get $APT_NET update
-# shellcheck disable=SC2086
-sudo DEBIAN_FRONTEND=noninteractive apt-get $APT_NET install -y "$@"
+
+# A mirror that answers slowly passes those bounds and still held a job to its limit (2 MB in 47 s, then 11 MB
+# that never came: three cancelled runs on 2026-10-23). So each step has five minutes as a whole, and a second or
+# third attempt goes to Ubuntu's own archive in place of the runner's mirror.
+APT_STEP_SECONDS=300
+attempt() {
+  # shellcheck disable=SC2086 # APT_NET is a list of options, split on purpose
+  sudo timeout "$APT_STEP_SECONDS" apt-get $APT_NET update &&
+    sudo DEBIAN_FRONTEND=noninteractive timeout "$APT_STEP_SECONDS" apt-get $APT_NET install -y "$@"
+}
+for try in 1 2 3; do
+  if attempt "$@"; then
+    exit 0
+  fi
+  echo "ci-apt-ubuntu: attempt $try failed or took over ${APT_STEP_SECONDS} s" >&2
+  [ "$try" -lt 3 ] || break
+  echo "ci-apt-ubuntu: retrying on archive.ubuntu.com" >&2
+  sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -name 'ubuntu*' \
+    -exec sed -i 's#http://[a-z0-9.-]*archive\.ubuntu\.com#http://archive.ubuntu.com#g' {} +
+done
+echo "ci-apt-ubuntu: apt failed three times" >&2
+exit 1
