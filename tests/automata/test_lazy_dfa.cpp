@@ -531,12 +531,14 @@ TEST(lazy_dfa_routing_full_differential_vs_pure_pike)
 // An anchored match without groups takes the forward DFA's anchored walk once 512 bytes or more lie ahead (a
 // tokenizer's `match(text, pos)` loop), and answers what the VM alone does: empty matches, the first alternative
 // that matches rather than the longest, lazy quantifiers, Unicode classes, anchors, hits and misses, at every
-// offset; nearer the end, and on a pattern with groups, the walk stays out.
+// offset, a position whose byte no match begins with refused before the DFAs (case folded, behind an assertion, a
+// multi-byte first character); nearer the end, and on a pattern with groups, the walk stays out.
 TEST(lazy_dfa_prefix_match_differential_vs_pure_pike)
 {
   const char* const pats[] {
     R"(#[^\n]*)", R"([A-Za-z_][A-Za-z0-9_]*)", R"([a-z]*)", R"(x?)", R"(a|ab)", R"(ab|a)", R"(a+?)", R"(.*?z)",
-    R"((?:\w+)\s*=)", R"(\d+(?:\.\d+)?)", R"(\w+)", R"((?m)^\w+$)", R"(\S+)", R"([^ ]+ )"};
+    R"((?:\w+)\s*=)", R"(\d+(?:\.\d+)?)", R"(\w+)", R"((?m)^\w+$)", R"(\S+)", R"([^ ]+ )", R"((?i)AB =)",
+    R"(\bab\b)", R"((?<=a)b)", R"(\x{E9}+)", R"([^\x00-\x7F]+)"};
   std::vector<std::string> texts;
   auto                     repeat {[](const std::string& unit, int n) {
                                      std::string t;
@@ -548,7 +550,8 @@ TEST(lazy_dfa_prefix_match_differential_vs_pure_pike)
   texts.emplace_back(repeat("# a comment, 12.5\nab = 3 a abz xx_9 = 7.25 ", 40));
   texts.emplace_back(repeat("caf\xC3\xA9 R\xC3\x89SUM\xC3\x89 \xCE\xB1\xCE\xB2 = 12 z\n", 40));
   texts.emplace_back(std::string(1500, 'a') + "b");
-  real::detail::tally(real::detail::counter::prefix_dfa_walks) = 0;
+  real::detail::tally(real::detail::counter::prefix_dfa_walks)          = 0;
+  real::detail::tally(real::detail::counter::prefix_first_byte_rejects) = 0;
   for (const char* const pat : pats) {
     const real::regex rx {pat};
     for (const std::string& t : texts) {
@@ -566,6 +569,7 @@ TEST(lazy_dfa_prefix_match_differential_vs_pure_pike)
     }
   }
   EXPECT(real::detail::tally(real::detail::counter::prefix_dfa_walks).load() > 0U);
+  EXPECT(real::detail::tally(real::detail::counter::prefix_first_byte_rejects).load() > 0U); // refused before a lease
   // a pattern with groups fills them on its own routes, and a short subject stays on the VM
   real::detail::tally(real::detail::counter::prefix_dfa_walks) = 0;
   const real::regex grouped   {R"(([a-z]+)=(\d+))"};
@@ -574,6 +578,32 @@ TEST(lazy_dfa_prefix_match_differential_vs_pure_pike)
   const real::regex plain     {R"([a-z]+)"};
   EXPECT_EQ(plain.match(std::string_view {"abc def"}, 4).end(), 7U);
   EXPECT_EQ(real::detail::tally(real::detail::counter::prefix_dfa_walks).load(), std::uint64_t {0});
+}
+
+// An anchored match of a pattern no byte DFA can carry (a lookaround), with 512 bytes or more ahead, leases no DFA:
+// the route would only decline it, and a tokenizer makes one such call at each position. Its answers are the VM's.
+TEST(lazy_dfa_prefix_match_of_a_lookaround_pattern_leases_no_dfa)
+{
+  const real::regex look {R"("(?:[^"\\]|"(?!""))+)"};
+  std::string       text;
+  while (text.size() < 2048) {
+    text += R"("abc""x" """q )";
+  }
+  real::detail::tally(real::detail::counter::dfa_leases_taken) = 0;
+  std::size_t matched {0};
+  for (std::size_t pos {0}; pos + 512 <= text.size(); ++pos) {
+    const auto routed {look.match(text, pos)};
+    real::detail::lazy_dfa_route_disabled() = true;
+    const auto pike   {look.match(text, pos)};
+    real::detail::lazy_dfa_route_disabled() = false;
+    EXPECT_EQ(routed.matched(), pike.matched());
+    if (routed.matched() && pike.matched()) {
+      EXPECT_EQ(routed.end(), pike.end());
+      ++matched;
+    }
+  }
+  EXPECT(matched > 0U);
+  EXPECT_EQ(real::detail::tally(real::detail::counter::dfa_leases_taken).load(), std::uint64_t {0});
 }
 
 TEST(range_intern_table_grows_and_keeps_every_key)

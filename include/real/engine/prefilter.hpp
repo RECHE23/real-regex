@@ -73,6 +73,7 @@ namespace real::detail {
     dfa_leases_taken,            //!< DFA set leases taken.
     class_folds,                 //!< Case folds the compiler computed for a class (a fold-cache hit costs none).
     prefix_dfa_walks,            //!< Anchored matches without groups the forward DFA's anchored walk answered.
+    prefix_first_byte_rejects,   //!< Anchored matches without groups refused on their first byte, before a DFA lease.
     count_                       //!< The number of counters.
   };
 

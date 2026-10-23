@@ -2016,6 +2016,11 @@ namespace real::detail {
       else {
         ensure_immutables(); // the DFAs still need the byte program and the shared alphabet
       }
+      // Neither program a byte DFA can carry (a lookaround): refused before the lease, which an anchored match a
+      // tokenizer makes at each position would otherwise take only to be declined (ensure_set_search_dfas).
+      if (!immut->byte_prog.eligible && !immut->look_prog.eligible) {
+        return false;
+      }
       const dfa_lease dfas {immut};
       shared_dfa_set& set {*dfas};
       ensure_set_search_dfas(*immut, set);
@@ -2080,6 +2085,13 @@ namespace real::detail {
                                                 std::size_t      start,
                                                 OutSlots&        out_slots)
     {
+      // No empty match is possible when the first bytes are valid, so a match at `start` begins with one of them:
+      // a byte outside them answers before the DFAs are leased (a tokenizer tries each rule at each position, and
+      // most rules fail on the first byte). The caller leaves 512 bytes ahead, so `text[start]` exists.
+      if (prog_.hints.first_bytes_valid && !prog_.hints.first_bytes.test(static_cast<std::uint8_t>(text[start]))) {
+        note(counter::prefix_first_byte_rejects);
+        return fail_slots(out_slots);
+      }
       std::size_t end  {npos};
       bool        quit {false};
       const bool  ran  {with_search_dfas([&](lazy_dfa& fwd, reverse_dfa& /*rev*/) {

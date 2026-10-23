@@ -4,6 +4,17 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 
 ## Unreleased
 
+**THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
+- **§A / §E / §Unicode / §B**: no benchmarked row changes route (every row searches, finds, substitutes or splits).
+  2026.10.18's anchored-walk route leased the search DFAs before reading whether either program a byte DFA can carry
+  exists, so an anchored `match()` of a pattern with a lookaround took a lease at each call only to give the match
+  back to the VM: SciLex's julia grammar, whose rules with lookarounds stay off its DFA, took 54 578 leases over
+  256 KiB and lexed 11.3 MB/s, where 2026.10.16 took none at 12.7. The eligibility is now read before the lease, for
+  every route that takes one: none, at 12.5 (M1 Pro, the three builds alternated). An anchored `match()` whose byte at
+  the start no match begins with (known only when no empty match is possible) answers before the route as well: a
+  tokenizer that tries each rule at each position, `=`-led identifier rules 3.8 → 1.2 ms over 37 000 calls.
+  `bench-layout` and `bench-layout-min` judge every row indistinguishable from layout noise on arm64 and x86-64.
+
 ## 2026.10.18 — 2026-10-23
 
 **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
