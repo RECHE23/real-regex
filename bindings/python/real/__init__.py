@@ -20,7 +20,7 @@ __all__ = [
     "get_config", "PatternError", "Limits",
 ]
 
-__version__ = "2026.10.18"
+__version__ = "2026.10.19"
 
 NOFLAG = 0
 I = IGNORECASE = 2

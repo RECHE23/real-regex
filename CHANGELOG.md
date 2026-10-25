@@ -4,6 +4,8 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 
 ## Unreleased
 
+## 2026.10.19 — 2026-10-25
+
 **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
 - **§A / §E / §Unicode / §B**: no benchmarked row changes route (every row searches, finds, substitutes or splits).
   2026.10.18's anchored-walk route leased the search DFAs before reading whether either program a byte DFA can carry
