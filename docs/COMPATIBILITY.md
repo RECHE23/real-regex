@@ -407,6 +407,10 @@ differential harness allowlists (the compat behavior is the spec behavior):
 
 - **Lookbehind** `(?<=…)` / `(?<!…)`: ES2018 has it and `real` implements it (bounded, ReDoS-safe);
   libstdc++'s ECMAScript engine rejects it. `real::compat` accepts and matches it.
+- **A lookahead under `match_not_null`**: libstdc++ applies the flag to the lookahead's own body too, so a
+  body that matches only empty fails there — `(?!|)a` matches `"a"` and `(?=|)a` does not, under the flag alone.
+  Its iterator retries with that flag after an empty match, so a nullable pattern with a lookahead (`(?!|)a|` over
+  `"aa"`) yields `0+0 0+1 1+0 1+1 2+0` where ECMAScript (node), Python and `real::compat` yield `0+0 1+0 2+0`.
 
 ## Syntax notes (for migrants)
 

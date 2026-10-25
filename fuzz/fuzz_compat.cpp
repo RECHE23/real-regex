@@ -409,7 +409,9 @@ namespace {
 
   //! \brief Whether the local std applies match_not_null to the whole match only. libstdc++ and libc++ apply it to
   //!        a lookahead's own body as well, so `(?=)a` over "a" finds nothing under the flag, where the match "a" is
-  //!        not empty; on such a std a pattern with a lookahead has no oracle under match_not_null.
+  //!        not empty; on such a std a pattern with a lookahead has no oracle under match_not_null, nor in the
+  //!        traversals of a nullable one, which retry with the flag after an empty match (`(?!|)a|` over "aa":
+  //!        libstdc++ 0+0 0+1 1+0 1+1 2+0, node, Python and real 0+0 1+0 2+0).
   //! \return True on a std that judges only the whole match.
   bool std_not_null_spares_lookaheads()
   {
@@ -431,6 +433,7 @@ namespace {
       && std::regex_replace(std::string {"ba"}, std::regex {R"(\B|^a)"}, std::string {"-"}) == "b--"};
     return follows;
   }
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
@@ -512,8 +515,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
   // S2 net: regex_replace must match std::regex_replace — the empty-match TRAVERSAL is the risk. A
   // real-backed pattern, nullable or not, runs the compat substitution on real's traversal, which must
-  // agree with a std that follows the standard (std_follows_traversal).
-  const bool compare_traversal {std_follows_traversal() || !compat.nullable()};
+  // agree with a std that follows the standard (std_follows_traversal), and that judges only the whole match
+  // under match_not_null where a nullable pattern holds a lookahead (std_not_null_spares_lookaheads).
+  const bool lookahead        {pattern.find("(?=") != std::string::npos || pattern.find("(?!") != std::string::npos};
+  const bool compare_traversal {(std_follows_traversal() || !compat.nullable())
+                                && (!compat.nullable() || !lookahead || std_not_null_spares_lookaheads())};
   // S5b: the format is GENERATED from the input (not fixed) so it exercises $0, $N/$NN, $&, $`, $',
   // $$, a lone trailing $, and literals — the branches that were coverage-discovered before.
   std::string fmt;
@@ -638,8 +644,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   const auto lo {prev_avail ? subject.begin() + 1 : subject.begin()};
 
   // Under match_not_null a lookahead has no oracle on a std that applies the flag to the lookahead's own body.
-  const bool not_null_oracle {(fbits & 0x20U) == 0U || std_not_null_spares_lookaheads()
-                              || (pattern.find("(?=") == std::string::npos && pattern.find("(?!") == std::string::npos)};
+  const bool not_null_oracle {(fbits & 0x20U) == 0U || std_not_null_spares_lookaheads() || !lookahead};
   // A search or match under match_prev_avail runs on REAL; a std that does not honor the flag is no oracle there.
   if (not_null_oracle && (!prev_avail || std_honors_prev_avail())) {
     real::compat::smatch cmf_m;
@@ -665,7 +670,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   for (std::sregex_iterator it(lo, subject.end(), std_re, smf), end; it != end; ++it) {
     std_mf_spans.emplace_back(it->position(0), it->length(0));
   }
-  if (not_null_oracle && compat_mf_spans != std_mf_spans) {
+  if (not_null_oracle && (!compat.nullable() || !lookahead || std_not_null_spares_lookaheads()) && compat_mf_spans != std_mf_spans) {
     __builtin_trap(); // iterator span-sequence divergence under match flags
   }
 
