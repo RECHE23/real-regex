@@ -383,6 +383,15 @@ namespace {
   // Where two unbounded quantifiers side by side stay cubic enough for std under the sanitizers.
   constexpr std::size_t max_two_quantifier_subject {96};
 
+  // Where one unbounded quantifier stays quadratic enough: the subject's length squared times the pattern's. Each
+  // traversal the harness makes (the search, the replacement, the iterators) starts std at every position, `.+` runs
+  // to the end of the line from each, and each step back tries what follows it, every alternative of an alternation
+  // among them: `.+` before 59 bytes of alternatives took libstdc++ 100 ms over 1024 bytes and 680 ms over 2596,
+  // natively, which the sanitizers made a `libFuzzer: timeout after 11 seconds` with every frame in
+  // std::__detail::_Executor. The bound leaves that pattern some 410 bytes (under a second sanitized), and a pattern of
+  // three bytes 1800, past the 512 bytes ahead from which real takes its anchored DFA walk.
+  constexpr double max_one_quantifier_work {1e7};
+
   //! \brief Whether the local std honors `match_prev_avail` as the standard does. compat takes the flag on REAL
   //!        for one search or match; libc++ ignores it for `^` (`^a` over the `a` of "ba" matches) and never lets
   //!        `\b` hold on an attempt that starts at `last`, so there a search under it has no oracle.
@@ -448,6 +457,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   if (subject.size() > max_two_quantifier_subject && unbounded_quantifiers(pattern) == 2) {
     return 0; // nor a cubic one over a long subject -- see unbounded_quantifiers
+  }
+  if (unbounded_quantifiers(pattern) == 1
+      && static_cast<double>(subject.size()) * static_cast<double>(subject.size()) * static_cast<double>(pattern.size())
+           > max_one_quantifier_work) {
+    return 0; // nor a quadratic one over a long subject -- see max_one_quantifier_work
   }
   if (empty_alternatives_explode(pattern)) {
     return 0; // nor for this one, at any subject length -- see empty_alternatives_explode
