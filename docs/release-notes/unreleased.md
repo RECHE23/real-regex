@@ -1,0 +1,21 @@
+# Unreleased — An anchored match of a lookaround pattern takes no DFA lease
+
+## Fixed
+
+- **An anchored `match()` of a pattern with a lookaround no longer leases the search DFAs at each call.** 2026.10.18's
+  anchored-walk route took the lease before reading whether a byte DFA could carry the pattern, only to give the match
+  back to the Pike VM: SciLex's julia grammar, whose rules with lookarounds stay off its DFA, took 54 578 leases over
+  256 KiB and lexed at 11.3 MB/s, where 2026.10.16 took none at 12.7. The eligibility is now read before the lease, on
+  every route that takes one: no lease, 12.5 MB/s (M1 Pro). Results are unchanged.
+
+## Changed
+
+- **An anchored `match()` whose first byte no match can begin with answers before any route** (known only when the
+  pattern cannot match empty): a tokenizer that tries each rule at each position, `=`-led identifier rules
+  3.8 → 1.2 ms over 37 000 calls; SciLex's per-rule path 7.6 → 9.0 MB/s on julia, matlab's DFA 21.6 → 25.7 MB/s.
+- **`docs/COMPATIBILITY.md` lists one more libstdc++ deviation:** under `match_not_null`, libstdc++ applies the flag
+  inside a lookahead's body, so `(?!|)a` matches `"a"` there; REAL, node and Python do not.
+- **Development only: the long fuzzing runs hold again.** The compat fuzzer skips a pattern with one unbounded
+  quantifier once its subject's length squared times its own exceeds 10^7, where the `std::regex` it compares against
+  is quadratic (one search took 680 ms over 2596 bytes), and leaves out libstdc++'s lookahead deviation above. CI's
+  Ubuntu package steps retry on Ubuntu's own archive when the runner's mirror stalls.
