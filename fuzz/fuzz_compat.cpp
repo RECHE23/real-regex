@@ -5,7 +5,7 @@
 // known libstdc++/spec deviation, its verdict + whole-match span MUST equal std::regex's. Any
 // non-allowlisted divergence aborts (libFuzzer reports the reproducer).
 //
-// Build & run: clang++ -std=c++20 -O1 -g -Iinclude -fsanitize=fuzzer,address,undefined \
+// Build & run: `make fuzz-compat`, or clang++ -std=c++20 -O1 -g -Iinclude -fsanitize=fuzzer,address,undefined
 //              fuzz/fuzz_compat.cpp -o fuzz_compat && ./fuzz_compat fuzz/corpus
 //
 // Allowlisted (real follows the ECMAScript spec; libstdc++ deviates — see COMPATIBILITY.md):
@@ -27,6 +27,7 @@
 
 namespace {
 
+#if defined(__GLIBCXX__)
   //! \brief Whether \p pat holds a `^` outside a bracket expression after a lookahead opens: libstdc++
   //!        anchors such a `^` at the lookahead's own start (`a(?=^b)` matches "ab", `a(?!^b)` does not),
   //!        where ECMAScript, libc++ and node anchor it at the subject's. Over-wide (it does not track
@@ -49,6 +50,7 @@ namespace {
     }
     return false;
   }
+#endif
 
   // A pattern the harness must not compare against std at all (real follows spec, libstdc++
   // deviates on it, so a both-accept span comparison would be meaningless).
@@ -119,7 +121,7 @@ namespace {
   // byte still makes unbounded in practice: `\0*\0*\0{30}…` takes libstdc++ 5 ms over 96 such bytes and 170 ms
   // over 234, for one search of the eight or so the harness makes, which the sanitizers slow tenfold. Counted,
   // not parsed, and approximate the same way: escapes and classes are skipped, and a false positive only
-  // shortens a subject.
+  // skips an input.
   int unbounded_quantifiers(std::string_view pat)
   {
     int  unbounded {0};
@@ -243,7 +245,7 @@ namespace {
   //
   // Scanned, not parsed: a `)` (or `]`) directly followed by `*`, `+`, or `{`, with some unbounded
   // quantifier seen since the matching opener. Escapes and classes are skipped so `\)` and `[+]` do
-  // not count. Approximate on purpose -- a false positive only shortens a subject.
+  // not count. Approximate on purpose -- a false positive only skips an input.
   bool nested_unbounded_quantifier(std::string_view pat)
   {
     int  depth      {0};
@@ -376,6 +378,71 @@ namespace {
     return false;
   }
 
+  // The shape the subject bound below misses: unbounded quantifiers inside a group under a COUNTED repeat --
+  // `(\w*w*){81}`. The 16-byte bound assumes some 2^n ways to split n bytes, which holds under an unbounded outer
+  // quantifier; under `{M}` a backtracker spreads the n bytes over the u·M slots of the group's u quantifiers, about
+  // C(n + u·M, n) ways, 10^20 for that pattern over 14 bytes: a weekly long run died on `libFuzzer: timeout after
+  // 14 seconds` there (libstdc++ 0.85 s natively for one search, every frame in std::__detail::_Executor; real
+  // 0.1 ms, the same match). Scanned, not parsed: per group its unbounded quantifiers (a nested group's counted in
+  // its parent's) and the largest count of a `{m}`, `{m,M}` or `{m,}` after it; the natural log of the worst
+  // group's ways, by lgamma. A false positive only skips an input.
+  double counted_nested_paths(std::string_view pat,
+                              std::size_t      n)
+  {
+    std::vector<double> inner {0.0}; // per depth: the unbounded quantifiers seen since its opener
+    double              worst {0.0};
+    bool                in_class {false};
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+      const char c {pat[i]};
+      if (c == '\\') {
+        ++i;
+        continue;
+      }
+      if (in_class) {
+        in_class = (c != ']');
+        continue;
+      }
+      if (c == '[') {
+        in_class = true;
+      }
+      else if (c == '(') {
+        inner.push_back(0.0);
+      }
+      else if (c == '*' || c == '+') {
+        inner.back() += 1.0;
+      }
+      else if (c == ')' && inner.size() > 1) {
+        const double u {inner.back()};
+        inner.pop_back();
+        inner.back() += u;
+        if (u > 0.0 && i + 1 < pat.size() && pat[i + 1] == '{') {
+          std::size_t j {i + 2};
+          double      count {0.0};
+          double      upper {0.0};
+          while (j < pat.size() && pat[j] >= '0' && pat[j] <= '9') {
+            count = (count * 10.0) + static_cast<double>(pat[j] - '0');
+            ++j;
+          }
+          if (j < pat.size() && pat[j] == ',') {
+            ++j;
+            while (j < pat.size() && pat[j] >= '0' && pat[j] <= '9') {
+              upper = (upper * 10.0) + static_cast<double>(pat[j] - '0');
+              ++j;
+            }
+          }
+          const double slots {u * std::max(count, upper)};
+          const double bytes {static_cast<double>(n)};
+          worst = std::max(worst, std::lgamma(bytes + slots + 1.0) - std::lgamma(bytes + 1.0) - std::lgamma(slots + 1.0));
+        }
+      }
+    }
+    return worst;
+  }
+
+  // The ways a backtracker may try per search before the oracle is skipped: some 3 ms each, room for the twenty
+  // or so searches the harness makes and the sanitizers' tenfold slowdown.
+  constexpr double max_counted_nested_paths {1e5};
+
   // Long enough for a backtracker to go exponential, short enough that 2^n stays trivial. Only
   // applied to the shapes above, so ordinary patterns keep the full fuzzer-chosen subject.
   constexpr std::size_t max_nested_quantifier_subject {16};
@@ -468,6 +535,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   }
   if (empty_alternatives_explode(pattern)) {
     return 0; // nor for this one, at any subject length -- see empty_alternatives_explode
+  }
+  if (counted_nested_paths(pattern, subject.size()) > std::log(max_counted_nested_paths)) {
+    return 0; // nor under a counted repeat, at any subject length -- see counted_nested_paths
   }
 
   real::compat::regex compat;

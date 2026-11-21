@@ -4,6 +4,10 @@ Per-train benchmark-impact log: the journal of what each release train measurabl
 
 ## Unreleased
 
+**THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
+- **§A / §E / §Unicode / §B**: nothing in this train touches the engine: the release workflow's publishing action
+  and the compat fuzzer's oracle bounds only.
+
 ## 2026.10.19 — 2026-10-25
 
 **THE TABLES ARE NOT RE-RUN, AND THE STAMP STAYS AT `2026.10.16` + tree `461648d8`.**
