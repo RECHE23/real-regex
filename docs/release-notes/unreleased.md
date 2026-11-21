@@ -8,3 +8,6 @@
   `std::regex` comparison where a group with unbounded quantifiers sits under `{m}`, `{m,M}` or `{m,}` and a
   backtracker would try more than 10^5 ways to spread the subject over it: `(\w*w*){81}` over 14 bytes took libstdc++
   0.85 s a search (about 10^20 ways), REAL 0.1 ms with the same match.
+- **Development only: CI follows Ubuntu 26.04 and Rust 1.100.** The s390x job runs the suite under qemu-user's
+  `qemu-s390x` (26.04 ships no `qemu-user-static`), and the Rust binding passes Rust 1.100's clippy; the gates run
+  their tools under `$(PYTHON)`, and SciForge is pinned at v2026.10.7, as NumericAL pins it.
