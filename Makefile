@@ -116,8 +116,8 @@ all: build
 build: ## [daily] Configure and build the test binary (CMake)
 	$(CMAKE) -S . -B $(BUILD) $(CMAKE_CXX) -DCMAKE_BUILD_TYPE=Release
 	$(CMAKE) --build $(BUILD) --parallel $(JOBS)
-	@cd $(CURDIR) && python3 tools/check_coverage_fresh.py --self-test >/dev/null
-	@cd $(CURDIR) && python3 tools/check_coverage_fresh.py $(BUILD)/real_tests_bin
+	@cd $(CURDIR) && $(PYTHON) tools/check_coverage_fresh.py --self-test >/dev/null
+	@cd $(CURDIR) && $(PYTHON) tools/check_coverage_fresh.py $(BUILD)/real_tests_bin
 
 # --- tests/ (ctest[via `test`]/sanitize/coverage toolchain/tsan smokes) ---------
 #
@@ -215,8 +215,8 @@ check-capi-abi:
 # lacks passes only with REAL_ABI_VERSION moved up (docs/site/developer/versioning.md). The
 # self-test runs first, so a verdict rule that stopped biting fails before it is trusted.
 check-abi-bump: ## [gates] An incompatible C ABI change must move REAL_ABI_VERSION
-	@python3 tools/check_abi_bump.py --self-test
-	@python3 tools/check_abi_bump.py
+	@$(PYTHON) tools/check_abi_bump.py --self-test
+	@$(PYTHON) tools/check_abi_bump.py
 
 # Features-probe .inc drift vs docs/site/data/features.yaml. Thin
 # delegation, same shape as check-capi-abi just above — see tools/Makefile's own
@@ -448,8 +448,8 @@ check-sse2-floor: ## [gate] x86-64: headers must compile with SSE2 but NOT AVX2 
 # Reads Doxygen's own XML for member kinds (never a regex over the source) and refuses to run
 # against an XML older than the headers -- a stale one silently reports a false clean.
 check-doc-style:
-	@python3 tools/check_doc_style.py --self-test >/dev/null
-	@python3 tools/check_doc_style.py
+	@$(PYTHON) tools/check_doc_style.py --self-test >/dev/null
+	@$(PYTHON) tools/check_doc_style.py
 
 # Workflow syntax that a YAML parser accepts and Actions rejects at dispatch: a key
 # not allowed on a `uses` job, an unknown runner label, a malformed ${{ }}. Nothing
@@ -470,16 +470,16 @@ check-workflows: ## Lint .github/workflows with actionlint (skipped if actionlin
 # directly -- design.dox is invisible to the XML check. Journals named in
 # docs/voice-journals.yaml are counted, not a fail.
 check-doc-voice:
-	@python3 tools/check_doc_voice.py --self-test >/dev/null
-	@python3 tools/check_doc_voice.py
-	@python3 tools/check_doc_voice_source.py --self-test >/dev/null
-	@python3 tools/check_doc_voice_source.py
+	@$(PYTHON) tools/check_doc_voice.py --self-test >/dev/null
+	@$(PYTHON) tools/check_doc_voice.py
+	@$(PYTHON) tools/check_doc_voice_source.py --self-test >/dev/null
+	@$(PYTHON) tools/check_doc_voice_source.py
 
 # A public non-\internal member of a curated class must be in that page's
 # :members: list or in docs/site/reference/unpublished.yaml -- never silent.
 check-curated-members:
-	@python3 tools/check_curated_members.py --self-test >/dev/null
-	@python3 tools/check_curated_members.py
+	@$(PYTHON) tools/check_curated_members.py --self-test >/dev/null
+	@$(PYTHON) tools/check_curated_members.py
 
 # Every :start-after:/:end-before: the site slices with must resolve, exactly once, in the file it
 # includes. Dependency-free on purpose: docs-site-gate needs sphinx-build and is SKIPPED without it,
@@ -487,8 +487,8 @@ check-curated-members:
 # in the cheap section and fails locally instead. Does NOT read docs/BENCHMARKS.md -- the site is
 # forbidden from including that file, and no live page does.
 check-site-anchors:
-	@python3 tools/check_site_anchors.py --self-test >/dev/null
-	@python3 tools/check_site_anchors.py
+	@$(PYTHON) tools/check_site_anchors.py --self-test >/dev/null
+	@$(PYTHON) tools/check_site_anchors.py
 
 # docs/site/differences-from-re.md says in its own header that it mirrors docs/divergences.dox and
 # must never be edited alone. That rule had no instrument and was broken four times before anyone
@@ -497,7 +497,7 @@ check-site-anchors:
 # it belongs in the cheap section, and --self-test injects the drift it exists to catch so a green
 # here is never an untested green.
 check-doc-mirror: ## [gates] Assert every site page still agrees with the canon it declares
-	@python3 tools/check_doc_mirror.py --self-test
+	@$(PYTHON) tools/check_doc_mirror.py --self-test
 
 # The guarded sentence carries TWO numbers -- "4 548 cases out of 3 218 434 in the tier-1 space" --
 # quoted in FOUR live pages, both measured by exhaustive-compat, which printed them and compared
@@ -510,8 +510,8 @@ check-doc-mirror: ## [gates] Assert every site page still agrees with the canon 
 # in a commit that never runs exhaustive-compat. --self-test injects a drifted count into EACH page
 # in turn, because a guard blind on one of four is not a guard.
 check-tolerated-count: ## [gates] The docs' tolerated-divergence count == the one exhaustive-compat pins
-	@python3 tools/check_tolerated_count.py --self-test
-	@python3 tools/check_tolerated_count.py
+	@$(PYTHON) tools/check_tolerated_count.py --self-test
+	@$(PYTHON) tools/check_tolerated_count.py
 
 # `std::regex` is three implementations, and "std refuses X" is false wherever another accepts X --
 # in the most expensive way, because it reads as a fact about the standard. This repo produced that
@@ -523,8 +523,8 @@ check-tolerated-count: ## [gates] The docs' tolerated-divergence count == the on
 # pages can drift in a commit that compiles nothing. --self-test un-names libstdc++ on each page in
 # turn, because a guard blind on one page of two is not a guard.
 check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour must name it
-	@python3 tools/check_stdlib_attribution.py --self-test
-	@python3 tools/check_stdlib_attribution.py
+	@$(PYTHON) tools/check_stdlib_attribution.py --self-test
+	@$(PYTHON) tools/check_stdlib_attribution.py
 
 # Three pages a Go visitor reads carried `v0.2` while the published module was `v0.3.3` -- two minors
 # behind. Nothing they SAID was wrong; they were wrong about what they WERE, which no content check
@@ -535,8 +535,8 @@ check-stdlib-attribution: ## [gates] A one-implementation std::regex behaviour m
 # an HTML comment does not trip it: a guard that cannot tell a stale label from a changelog entry
 # would teach someone to falsify the record.
 check-go-version-labels: ## [gates] The Go binding's living pages carry the module's current minor
-	@python3 tools/check_go_version_labels.py --self-test
-	@python3 tools/check_go_version_labels.py
+	@$(PYTHON) tools/check_go_version_labels.py --self-test
+	@$(PYTHON) tools/check_go_version_labels.py
 
 # `make doc-check` reproduces "the CI Doxygen" via apt inside ubuntu:24.04 and prints the version.
 # The publishing workflows ran a bare `apt-get install -y doxygen` on `ubuntu-latest`, so the two
@@ -547,7 +547,7 @@ check-go-version-labels: ## [gates] The Go binding's living pages carry the modu
 # CI executes, not copied, so editing the workflow reaches this check; refusing two wrong versions
 # is its own self-test, and there is no quiet mode to lose it in.
 check-doxygen-pin: ## [gates] The publishing workflows pin Doxygen 1.9.8, and the pin has a witness
-	@python3 tools/check_doxygen_pin.py
+	@$(PYTHON) tools/check_doxygen_pin.py
 
 # A bare `apt-get update` on the GitHub Ubuntu image also hits microsoft/docker
 # indexes. A Hash Sum mismatch on any of those blocked docs publication twice
@@ -557,8 +557,8 @@ check-doxygen-pin: ## [gates] The publishing workflows pin Doxygen 1.9.8, and th
 # trips two script arms at once, so that shape is not used) and the print
 # path, so a green is not a hand-run that nobody will repeat.
 check-apt-bound: ## [gates] Workflows refresh only Ubuntu apt indexes
-	@python3 tools/check_apt_bound.py --self-test
-	@python3 tools/check_apt_bound.py
+	@$(PYTHON) tools/check_apt_bound.py --self-test
+	@$(PYTHON) tools/check_apt_bound.py
 
 # Three phases, because the harness has three claims and a claim nobody has seen fail is not a
 # claim. (1) The artifact map: the right rebuild command per file, and a NAMED silence for a file
@@ -572,18 +572,18 @@ check-apt-bound: ## [gates] Workflows refresh only Ubuntu apt indexes
 # kills a sleep, not a test", which stopped being true the moment the rebuild itself became the
 # thing under test.
 check-sabotage: ## [gates] The harness's three claims: artifact map, rebuild after revert, SIGTERM
-	@python3 tools/sabotage.py --self-test
+	@$(PYTHON) tools/sabotage.py --self-test
 
 # A guard's --self-test passing says nothing about how many of its arms it drives. blind_guard.py
 # blinds each condition in turn and re-runs the self-test: a condition that stays green is a case
 # missing or a dead test. check-blind-guard proves the tool's own verdicts (cheap); blind-guards runs it
 # over every guard that has a self-test (minutes -- a dev step, run after changing a guard).
 check-blind-guard: ## [gates] blind_guard.py tells a driven arm, an undriven one and a crash apart
-	@python3 tools/blind_guard.py --self-test
+	@$(PYTHON) tools/blind_guard.py --self-test
 
 blind-guards: ## [dev] Blind every condition of each self-tested tools/check_*.py and shared tools/_*.py module
 	@status=0; for g in $$(grep -l -- '--self-test' tools/check_*.py tools/_*.py); do \
-	   out=$$(python3 tools/blind_guard.py "$$g") || status=1; printf '%s\n' "$$out" | tail -1; \
+	   out=$$($(PYTHON) tools/blind_guard.py "$$g") || status=1; printf '%s\n' "$$out" | tail -1; \
 	 done; exit $$status
 
 # WHAT READS docs/BENCHMARKS.md. The Version cell is a stamp (REAL `X.Y.Z` + whether tables
@@ -606,8 +606,8 @@ blind-guards: ## [dev] Blind every condition of each self-tested tools/check_*.p
 # on those would train the reader to ignore it. The stamp is the Version cell, not the last touch of
 # the path: a host-name rewrite is not a re-measure. Warns, never fails.
 check-bench-stamp:
-	@python3 tools/check_bench_stamp.py --self-test >/dev/null
-	@python3 tools/check_bench_stamp.py
+	@$(PYTHON) tools/check_bench_stamp.py --self-test >/dev/null
+	@$(PYTHON) tools/check_bench_stamp.py
 
 # Arithmetic of docs/BENCHMARKS.md's §A/§E tables AND of §A's reading bullets (and, via the twin
 # script, §Unicode). Bound to those headings, not to the Version cell and not to CHANGELOG.md.
@@ -618,8 +618,8 @@ check-bench-stamp:
 # decision. Fails, never warns: unlike check-bench-stamp above, nothing here needs a benchmark
 # re-run -- it is division.
 check-bench-ratios:
-	@python3 benchmarks/verify_bench_ratios.py
-	@python3 benchmarks/verify_unicode_ratios.py
+	@$(PYTHON) benchmarks/verify_bench_ratios.py
+	@$(PYTHON) benchmarks/verify_unicode_ratios.py
 
 # The gate's optional PYTHON tools in one venv, so the two steps that silently skip without them stop
 # skipping. mk/common.mk points SPHINXBUILD and MYPY_PYTHON here when it exists. Built from
@@ -900,7 +900,7 @@ ac-regime: ## [bench] Aho-Corasick routing: the four subject regimes, AC on vs o
 	@$(BUILD)/ac_regime $(if $(REPS),$(REPS),9)
 
 sabotage-sweep: ## [bench] Perturb each decision constant; report the ones no test reacts to (dev tool, ~40 min)
-	@python3 tools/sabotage_sweep.py
+	@$(PYTHON) tools/sabotage_sweep.py
 
 # The companion to sabotage-sweep, for the case it cannot cover: one exact textual change, verified
 # and put back. sabotage-sweep perturbs the DECISION CONSTANTS; this breaks an arbitrary line, which
@@ -909,7 +909,7 @@ sabotage-sweep: ## [bench] Perturb each decision constant; report the ones no te
 # defects a hand-written version reacquires every time. `make check-sabotage` is the SIGTERM
 # self-test (defect 4); SIGKILL is uncatchable and is not claimed.
 sabotage-help: ## [bench] How to break one exact line and verify a guard reacts (tools/sabotage.py)
-	@python3 tools/sabotage.py --help | sed -n '1,42p'
+	@$(PYTHON) tools/sabotage.py --help | sed -n '1,42p'
 
 # -Wshadow is listed explicitly because it is in NEITHER -Wall nor -Wextra, and MSVC promotes the same
 # diagnostic (C4456) to an error under /WX -- so a shadowed local compiled clean through every local

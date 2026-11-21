@@ -140,8 +140,8 @@ format-check: ## Uncrustify, dry-run, exits non-zero on diff
 	cd $(ROOT) && uncrustify -c $(SCIFORGE_LINT)/uncrustify.cfg --check $(FORMAT_FILES)
 
 check-layers: ## Enforce the include/real/ header layering contract (no tier climbing); its self-test first
-	@cd $(ROOT) && python3 tools/check_layers.py --self-test
-	@cd $(ROOT) && python3 tools/check_layers.py
+	@cd $(ROOT) && $(PYTHON) tools/check_layers.py --self-test
+	@cd $(ROOT) && $(PYTHON) tools/check_layers.py
 
 # C ABI frozen-surface pin: golden GENERATED from bindings/c/real_capi.h
 # (never hand-edited). --check fails if header and golden diverge. Can-fail proof:
@@ -149,7 +149,7 @@ check-layers: ## Enforce the include/real/ header layering contract (no tier cli
 #   make check-capi-abi   # must exit non-zero; then: python3 tools/gen_capi_abi_golden.py
 # Enum/flag value pins live in tests/bindings/test_capi_abi.cpp (real::flags cross-check).
 check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins
-	@cd $(ROOT) && python3 tools/gen_capi_abi_golden.py --check
+	@cd $(ROOT) && $(PYTHON) tools/gen_capi_abi_golden.py --check
 	@echo "check-capi-abi: PASS (golden matches real_capi.h)"
 
 # Features-matrix drift check -- ONE target, TWO generated artifacts, both from
@@ -165,7 +165,7 @@ check-capi-abi: ## C ABI golden vs real_capi.h + enum/flag pins
 # drift actually gets caught), but it also runs standalone here, cheap enough to sit
 # alongside check-capi-abi in ci.yml's preflight job.
 check-features-probe: ## Features-probe .inc + COMPATIBILITY.md scorecard vs features.yaml
-	@cd $(ROOT) && python3 tools/gen_features.py --check
+	@cd $(ROOT) && $(PYTHON) tools/gen_features.py --check
 	@echo "check-features-probe: PASS (features_probe_generated.inc matches features.yaml)"
 
 help: ## Show these targets

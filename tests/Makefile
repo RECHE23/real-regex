@@ -70,7 +70,7 @@ test: ## Run the test suite (ctest; `build` — the CMake configure+compile — 
 sanitize: ## Build and run the tests under ASan + UBSan
 	cd $(ROOT) && $(CMAKE) -S . -B $(BUILD)/sanitize $(CMAKE_CXX) -DREAL_SANITIZE=ON
 	$(CMAKE) --build $(BUILD)/sanitize --parallel $(JOBS)
-	@cd $(ROOT) && python3 tools/check_coverage_fresh.py $(BUILD)/sanitize/real_tests_bin
+	@cd $(ROOT) && $(PYTHON) tools/check_coverage_fresh.py $(BUILD)/sanitize/real_tests_bin
 	$(CTEST) --test-dir $(BUILD)/sanitize --output-on-failure
 
 # Shared build/run/merge steps used by both the text summary and the HTML report.
@@ -81,7 +81,7 @@ sanitize: ## Build and run the tests under ASan + UBSan
 coverage-build:
 	cd $(ROOT) && $(CMAKE) -S . -B $(COV_DIR) -DREAL_COVERAGE=ON -DCMAKE_CXX_COMPILER=$(COV_CXX)
 	$(CMAKE) --build $(COV_DIR) --parallel $(JOBS)
-	@cd $(ROOT) && python3 tools/check_coverage_fresh.py $(COV_DIR)/real_tests_bin
+	@cd $(ROOT) && $(PYTHON) tools/check_coverage_fresh.py $(COV_DIR)/real_tests_bin
 	LLVM_PROFILE_FILE=$(COV_DIR)/tests.profraw $(COV_DIR)/real_tests_bin
 	$(PROFDATA) merge -sparse $(COV_DIR)/tests.profraw -o $(COV_DIR)/tests.profdata
 
@@ -92,7 +92,7 @@ coverage: coverage-build ## Line-coverage text summary + HTML report
 	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
 	@cd $(ROOT) && grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
 	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
-	@python3 $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
+	@$(PYTHON) $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
 	    $(ROOT),real-regex \
 	    $(abspath $(ROOT)/../sciforge),sciforge
 	@echo "HTML coverage report: $(COV_DIR)/html/index.html"
@@ -147,7 +147,7 @@ coverage-html:
 	    -format=html -output-dir=$(COV_DIR)/html -show-line-counts-or-regions
 	@cd $(ROOT) && grep -q "REAL dark-coverage theme" $(COV_DIR)/html/style.css 2>/dev/null || \
 	    cat docs/coverage-style.css >> $(COV_DIR)/html/style.css
-	@python3 $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
+	@$(PYTHON) $(ROOT)/tools/anonymize_coverage_html.py $(COV_DIR)/html \
 	    $(ROOT),real-regex \
 	    $(abspath $(ROOT)/../sciforge),sciforge
 	@echo "HTML coverage report: $(COV_DIR)/html/index.html"

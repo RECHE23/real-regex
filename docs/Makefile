@@ -108,8 +108,8 @@ docs-site: doc-no-coverage doc-site-xml ## Build the themed Sphinx/Breathe site 
 	fi
 	@rm -rf $(BUILD)/site/html/api && cp -R $(BUILD)/doc/html $(BUILD)/site/html/api
 	@rm -rf $(BUILD)/site/html/api/coverage
-	@python3 $(ROOT)/tools/relocate_coverage_iframe.py $(BUILD)/site/html/api/coverage.html
-	@python3 $(ROOT)/tools/strip_sphinx_artefacts.py $(BUILD)/site/html
+	@$(PYTHON) $(ROOT)/tools/relocate_coverage_iframe.py $(BUILD)/site/html/api/coverage.html
+	@$(PYTHON) $(ROOT)/tools/strip_sphinx_artefacts.py $(BUILD)/site/html
 	@echo "docs-site: $(BUILD)/site/html/index.html"
 
 # The site's own gate: -W (every warning fatal) + --keep-going (report all of them,
@@ -183,14 +183,14 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	@mkdir -p $(BUILD)/doc && cd $(ROOT) && doxygen Doxyfile
 	@rm -rf $(BUILD)/doc/xml-site && cd $(ROOT) && doxygen Doxyfile.site
 	@echo "── check-doc-voice (no route vocabulary in published Doxygen XML)"
-	@python3 $(ROOT)/tools/check_doc_voice.py --self-test >/dev/null
-	@python3 $(ROOT)/tools/check_doc_voice.py
+	@$(PYTHON) $(ROOT)/tools/check_doc_voice.py --self-test >/dev/null
+	@$(PYTHON) $(ROOT)/tools/check_doc_voice.py
 	@echo "── check-doc-voice-source (docs/*.dox + docs/*.md; journals counted, not a free pass)"
-	@python3 $(ROOT)/tools/check_doc_voice_source.py --self-test >/dev/null
-	@python3 $(ROOT)/tools/check_doc_voice_source.py
+	@$(PYTHON) $(ROOT)/tools/check_doc_voice_source.py --self-test >/dev/null
+	@$(PYTHON) $(ROOT)/tools/check_doc_voice_source.py
 	@echo "── check-curated-members (allowlist omissions are explicit)"
-	@python3 $(ROOT)/tools/check_curated_members.py --self-test >/dev/null
-	@python3 $(ROOT)/tools/check_curated_members.py
+	@$(PYTHON) $(ROOT)/tools/check_curated_members.py --self-test >/dev/null
+	@$(PYTHON) $(ROOT)/tools/check_curated_members.py
 	@rm -rf $(BUILD)/site/_gate $(BUILD)/site/_linkcheck
 	$(SPHINXBUILD) $(SPHINXOPTS) -W --keep-going -b html $(ROOT)/docs/site $(BUILD)/site/_gate
 	$(SPHINXBUILD) $(SPHINXOPTS) -b linkcheck $(ROOT)/docs/site $(BUILD)/site/_linkcheck
@@ -202,9 +202,9 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	  exit 1; \
 	fi
 	@echo "── no-inline-quickstart (every <pre> in landing.html is a {{ quickstart_* }} placeholder)"
-	@python3 $(ROOT)/tools/check_no_inline_quickstart.py --self-test >/dev/null
-	@python3 $(ROOT)/tools/check_no_inline_quickstart.py
-	@python3 $(ROOT)/tools/check_doc_mirror.py --self-test
+	@$(PYTHON) $(ROOT)/tools/check_no_inline_quickstart.py --self-test >/dev/null
+	@$(PYTHON) $(ROOT)/tools/check_no_inline_quickstart.py
+	@$(PYTHON) $(ROOT)/tools/check_doc_mirror.py --self-test
 	@echo "── built-HTML link check (build/site/html/*.html, site-wide -- linkcheck can't see the bespoke landing template or any #anchor)"
 	@$(MAKE) docs-site
 	@echo "── published-tree hygiene (one coverage copy, no .doctrees, no source browser, no machine paths)"
@@ -231,8 +231,8 @@ docs-site-gate: ## Sphinx -W --keep-going + linkcheck + built-HTML link check fo
 	fi
 	@test ! -e $(BUILD)/site/html/coverage/coverage/Users || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/Users"; exit 1; }
 	@test ! -e $(BUILD)/site/html/coverage/coverage/home || { echo "docs-site-gate: FAIL -- coverage tree still has coverage/home"; exit 1; }
-	@python3 $(ROOT)/tools/check_site_links.py --self-test >/dev/null
-	@python3 $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
+	@$(PYTHON) $(ROOT)/tools/check_site_links.py --self-test >/dev/null
+	@$(PYTHON) $(ROOT)/tools/check_site_links.py $(BUILD)/site/html
 	@echo "docs-site-gate: PASS (sphinx -W --keep-going + linkcheck + no-inline-quickstart + built-HTML link check + published-tree hygiene)"
 
 help: ## Show these targets
