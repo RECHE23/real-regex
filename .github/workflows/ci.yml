@@ -192,7 +192,8 @@ jobs:
   # The whole suite on two cross targets, each with the property it exists for:
   #  - i686: size_t is 32 bits. The syntax-only job above catches a narrowing that does not compile; this
   #    one catches an offset that compiles and overflows, which is a wrong answer.
-  #  - s390x, big-endian, under qemu: the word-at-a-time scans must not depend on byte order. GCC 14, not
+  #  - s390x, big-endian, under qemu (qemu-user's qemu-s390x: Ubuntu 26.04 ships it static and has no
+  #    qemu-user-static; 24.04 has both): the word-at-a-time scans must not depend on byte order. GCC 14, not
   #    13: libstdc++ 13 compares a vector<unsigned> with memcmp on big-endian, and GCC 13 reports a
   #    spurious -Wstringop-overread there, which -Werror makes fatal.
   # Each entry asserts its own binary format; a weaker shared check would let the wrong target pass.
@@ -213,9 +214,9 @@ jobs:
             timeout: 30
           - target: s390x
             triple: s390x-linux-gnu
-            packages: qemu-user-static
+            packages: qemu-user
             format: MSB
-            launcher: qemu-s390x-static
+            launcher: qemu-s390x
             timeout: 40
     steps:
       - uses: actions/checkout@v6

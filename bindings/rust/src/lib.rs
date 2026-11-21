@@ -552,11 +552,13 @@ impl Regex {
         }
     }
 
+    #[cfg(feature = "fallback")]
     fn uses_engine(&self) -> bool {
-        #[cfg(feature = "fallback")]
-        if self.fallback.is_some() {
-            return false;
-        }
+        self.fallback.is_none()
+    }
+
+    #[cfg(not(feature = "fallback"))]
+    fn uses_engine(&self) -> bool {
         true
     }
 
