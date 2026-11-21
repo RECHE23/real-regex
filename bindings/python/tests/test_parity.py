@@ -1458,19 +1458,23 @@ class TestCharOffsetScaling(unittest.TestCase):
         return (time.perf_counter() - start) * 1000.0
 
     def test_span_reads_scale_linearly(self):
-        # Sizes that keep the small run several milliseconds long, and the two sizes alternated round by
-        # round: a scheduler stall then hits one round of each, not every run of one size.
+        # Each size against the same scan that reads no span, measured beside it: a runner's speed, its
+        # caches and its stalls move both alike, and only what the span reads add is compared. Linear reads
+        # keep that ratio at both sizes; the quadratic walk multiplied it by about 4 per 4x (41.4 -> 633.2 ms
+        # against 1.6 -> 7.0). The sizes are alternated round by round, so a stall hits one round of each.
         small, large = 8000, 32000  # 4x the subject
-        best_small = best_large = float("inf")
+        best = {}
         for _ in range(5):
-            best_small = min(best_small, self._elapsed_ms(small, True))
-            best_large = min(best_large, self._elapsed_ms(large, True))
-        # Linear would be ~4x. Quadratic was ~15x (41.4 -> 633.2). A generous 8x ceiling separates
-        # the two by a wide margin while leaving room for scheduler noise on a busy machine.
+            for units in (small, large):
+                for read_span in (False, True):
+                    elapsed = self._elapsed_ms(units, read_span)
+                    best[units, read_span] = min(best.get((units, read_span), float("inf")), elapsed)
+        ratio_small = best[small, True] / best[small, False]
+        ratio_large = best[large, True] / best[large, False]
         self.assertLess(
-            best_large, best_small * 8.0,
-            f"span reads look super-linear: {best_small:.1f} ms at {small} units, "
-            f"{best_large:.1f} ms at {large} (4x the subject)")
+            ratio_large, ratio_small * 2.0,
+            f"span reads look super-linear: reading spans cost {ratio_small:.2f}x the plain scan at {small} "
+            f"units, {ratio_large:.2f}x at {large} (4x the subject)")
 
     def test_match_cost_does_not_grow_with_the_subject(self):
         # The default endpos is the subject's end; converting it by walking the UTF-8 from byte 0 made
